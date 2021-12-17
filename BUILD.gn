@@ -1,0 +1,111 @@
+# Copyright (C) 2021 Huawei Device Co., Ltd.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+import("//build/ohos.gni")
+
+SOURCE_DIR = "//base/telephony/cellular_data/services"
+
+ohos_shared_library("tel_cellular_data") {
+  sources = [
+    "$SOURCE_DIR/src/apn_manager/apn_holder.cpp",
+    "$SOURCE_DIR/src/apn_manager/apn_item.cpp",
+    "$SOURCE_DIR/src/apn_manager/apn_manager.cpp",
+    "$SOURCE_DIR/src/apn_manager/connection_retry_policy.cpp",
+    "$SOURCE_DIR/src/cellular_data_controller.cpp",
+    "$SOURCE_DIR/src/cellular_data_handler.cpp",
+    "$SOURCE_DIR/src/cellular_data_rdb_observer.cpp",
+    "$SOURCE_DIR/src/cellular_data_service.cpp",
+    "$SOURCE_DIR/src/cellular_data_service_stub.cpp",
+    "$SOURCE_DIR/src/cellular_data_setting_observer.cpp",
+    "$SOURCE_DIR/src/data_connection_manager.cpp",
+    "$SOURCE_DIR/src/data_connection_monitor.cpp",
+    "$SOURCE_DIR/src/data_switch_settings.cpp",
+    "$SOURCE_DIR/src/sim_switcher.cpp",
+    "$SOURCE_DIR/src/state_machine/activating.cpp",
+    "$SOURCE_DIR/src/state_machine/active.cpp",
+    "$SOURCE_DIR/src/state_machine/cellular_data_state_machine.cpp",
+    "$SOURCE_DIR/src/state_machine/default.cpp",
+    "$SOURCE_DIR/src/state_machine/disconnecting.cpp",
+    "$SOURCE_DIR/src/state_machine/inactive.cpp",
+    "$SOURCE_DIR/src/state_notification.cpp",
+    "$SOURCE_DIR/src/traffic_management.cpp",
+    "$SOURCE_DIR/src/utils/cellular_data_dump_helper.cpp",
+    "$SOURCE_DIR/src/utils/cellular_data_net_agent.cpp",
+    "$SOURCE_DIR/src/utils/cellular_data_rdb_helper.cpp",
+    "$SOURCE_DIR/src/utils/cellular_data_utils.cpp",
+    "$SOURCE_DIR/src/utils/network_search_utils.cpp",
+    "$SOURCE_DIR/src/utils/ril_adapter_utils.cpp",
+    "$SOURCE_DIR/src/utils/sim_utils.cpp",
+  ]
+
+  include_dirs = [
+    "$SOURCE_DIR/include",
+    "//base/telephony/core_service/common/cellular_data",
+    "//base/telephony/core_service/common/core",
+    "//base/telephony/core_service/common/network_search",
+    "//base/telephony/core_service/common/sim",
+    "//base/telephony/core_service/common/state_registry",
+    "//base/telephony/core_service/common/data_storage",
+    "//base/telephony/core_service/common/call_manager",
+    "//base/telephony/core_service/common/cellular_call",
+    "//base/telephony/core_service/interfaces/innerkits/core",
+    "//base/telephony/core_service/interfaces/innerkits/call_manager",
+    "//base/telephony/core_service/interfaces/innerkits/state_registry",
+    "//base/telephony/core_service/interfaces/innerkits/network_search",
+    "//base/telephony/core_service/interfaces/innerkits/sim",
+    "//base/telephony/core_service/utils/common/include",
+    "//base/telephony/core_service/utils/preferences/include",
+    "$SOURCE_DIR/include/common",
+    "$SOURCE_DIR/include/external",
+    "$SOURCE_DIR/include/state_machine",
+    "$SOURCE_DIR/include/utils",
+    "$SOURCE_DIR/include/apn_manager",
+    "//base/telephony/ril_adapter/interfaces/innerkits/include",
+    "//base/telephony/data_storage/pdp_profile/include",
+    "//foundation/aafwk/standard/interfaces/innerkits/dataobs_manager/include",
+  ]
+
+  deps = [
+    "//base/telephony/core_service:tel_core_service",
+    "//base/telephony/core_service/utils:libtelephony_common",
+    "//foundation/aafwk/standard/frameworks/kits/ability/native:abilitykit_native",
+    "//foundation/aafwk/standard/interfaces/innerkits/dataobs_manager:dataobs_manager",
+    "//foundation/distributedschedule/dmsfwk/interfaces/innerkits/uri:zuri",
+    "//utils/native/base:utils",
+  ]
+
+  external_deps = [
+    "aafwk_standard:want",
+    "appexecfwk_standard:appexecfwk_core",
+    "appexecfwk_standard:libeventhandler",
+    "ces_standard:cesfwk_innerkits",
+    "core_service:tel_cellular_data_api",
+    "ipc:ipc_core",
+    "native_appdatamgr:native_dataability",
+    "native_appdatamgr:native_rdb",
+    "netmanager_standard:net_conn_manager_if",
+    "safwk:system_ability_fwk",
+    "samgr_standard:samgr_proxy",
+  ]
+  defines = [
+    "TELEPHONY_LOG_TAG = \"CELLULAR_DATA\"",
+    "LOG_DOMAIN = 0xD002B01",
+  ]
+  if (is_standard_system) {
+    external_deps += [ "hiviewdfx_hilog_native:libhilog" ]
+  } else {
+    external_deps += [ "hilog:libhilog" ]
+  }
+
+  part_name = "cellular_data"
+  subsystem_name = "telephony"
+}
