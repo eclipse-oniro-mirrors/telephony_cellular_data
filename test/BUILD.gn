@@ -1,0 +1,68 @@
+# Copyright (C) 2021 Huawei Device Co., Ltd.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+import("//build/test.gni")
+
+SOURCE_DIR = "//base/telephony/cellular_data/services"
+
+ohos_unittest("tel_cellular_data_test") {
+  subsystem_name = "telephony"
+  part_name = "cellular_data"
+  test_module = "tel_cellular_data_test"
+  module_out_path = part_name + "/" + test_module
+
+  sources = [ "//base/telephony/cellular_data/test/cellular_data_test.cpp" ]
+
+  include_dirs = [
+    "$SOURCE_DIR/include",
+    "//base/telephony/core_service/common/core",
+    "//base/telephony/core_service/common/api",
+    "//base/telephony/core_service/common/cellular_data",
+    "//base/telephony/core_service/interfaces/innerkits/network_search",
+    "//base/telephony/cellular_data/interfaces/innerkits",
+    "//base/telephony/core_service/common/network_search",
+    "//base/telephony/core_service/interfaces/innerkits/sim",
+    "//base/telephony/core_service/interfaces/innerkits/core",
+    "//base/telephony/core_service/common/sim",
+    "//base/telephony/ril_adapter/interfaces/innerkits/include",
+    "//base/telephony/core_service/utils/log/include",
+    "$SOURCE_DIR/interfaces/kits/include",
+    "$SOURCE_DIR/include/common",
+  ]
+
+  deps = [
+    "//base/telephony/core_service:tel_core_service",
+    "//utils/native/base:utils",
+  ]
+
+  external_deps = [
+    "appexecfwk_standard:libeventhandler",
+    "core_service:tel_cellular_data_api",
+    "ipc:ipc_core",
+    "safwk:system_ability_fwk",
+    "samgr_standard:samgr_proxy",
+  ]
+
+  if (is_standard_system) {
+    external_deps += [ "hiviewdfx_hilog_native:libhilog" ]
+  } else {
+    external_deps += [ "hilog:libhilog" ]
+  }
+
+  part_name = "cellular_data"
+  subsystem_name = "telephony"
+}
+
+group("unittest") {
+  testonly = true
+  deps = [ ":tel_cellular_data_test" ]
+}
