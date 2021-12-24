@@ -44,7 +44,10 @@ void Active::StateEnd()
     isActive_ = false;
     CellularDataNetAgent &netAgent = CellularDataNetAgent::GetInstance();
     int32_t supplierId = netAgent.GetSupplierId(shareStateMachine->GetSlotId(), shareStateMachine->GetCapability());
-    netAgent.UpdateNetSupplierInfo(supplierId, shareStateMachine->netSupplierInfo_);
+    if (shareStateMachine->netSupplierInfo_ != nullptr) {
+        shareStateMachine->netSupplierInfo_->isAvailable_ = false;
+        netAgent.UpdateNetSupplierInfo(supplierId, shareStateMachine->netSupplierInfo_);
+    }
 }
 
 bool Active::StateProcess(const AppExecFwk::InnerEvent::Pointer &event)
