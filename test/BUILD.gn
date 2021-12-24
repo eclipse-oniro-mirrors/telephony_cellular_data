@@ -20,7 +20,10 @@ ohos_unittest("tel_cellular_data_test") {
   test_module = "tel_cellular_data_test"
   module_out_path = part_name + "/" + test_module
 
-  sources = [ "//base/telephony/cellular_data/test/cellular_data_test.cpp" ]
+  sources = [
+    "//base/telephony/cellular_data/test/cellular_data_test.cpp",
+    "//base/telephony/core_service/interfaces/innerkits/cellular_data/cellular_data_service_proxy.cpp",
+  ]
 
   include_dirs = [
     "$SOURCE_DIR/include",

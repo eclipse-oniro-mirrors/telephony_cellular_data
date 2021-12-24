@@ -180,36 +180,36 @@ public:
 
     static void TestDataPackageUp()
     {
-        system("rm /data/cell_tx");
-        system("touch /data/cell_rx");
-        if (access("/data/cell_tx", F_OK) == 0) {
-            std::cout << "Please manually delete cell_tx file " << std::endl;
+        system("rm /data/iface_tx_p");
+        system("touch /data/iface_rx_p");
+        if (access("/data/iface_tx_p", F_OK) == 0) {
+            std::cout << "Please manually delete iface_tx_p file " << std::endl;
             return;
         }
-        if (access("/data/cell_tx", F_OK) != 0) {
-            std::cout << "Please manually touch cell_tx file" << std::endl;
+        if (access("/data/iface_tx_p", F_OK) != 0) {
+            std::cout << "Please manually touch iface_tx_p file" << std::endl;
         }
     }
 
     static void TestDataPackageDown()
     {
-        system("rm /data/cell_rx");
-        system("touch /data/cell_tx");
-        if (access("/data/cell_rx", F_OK) == 0) {
-            std::cout << "Please manually delete cell_rx file " << std::endl;
+        system("rm /data/iface_rx_p");
+        system("touch /data/iface_tx_p");
+        if (access("/data/iface_rx_p", F_OK) == 0) {
+            std::cout << "Please manually delete iface_rx_p file " << std::endl;
             return;
         }
-        if (access("/data/cell_tx", F_OK) != 0) {
-            std::cout << "Please manually touch cell_tx file" << std::endl;
+        if (access("/data/iface_tx_p", F_OK) != 0) {
+            std::cout << "Please manually touch iface_tx_p file" << std::endl;
         }
     }
 
     static void TestDataPackageUpDown()
     {
-        system("rm /data/cell_tx");
-        system("rm /data/cell_rx");
-        if (access("/data/cell_tx", F_OK) == 0 || access("/data/cell_rx", F_OK) == 0) {
-            std::cout << "Please manually delete cell_rx and cell_tx file " << std::endl;
+        system("rm /data/iface_tx_p");
+        system("rm /data/iface_rx_p");
+        if (access("/data/iface_tx_p", F_OK) == 0 || access("/data/iface_rx_p", F_OK) == 0) {
+            std::cout << "Please manually delete iface_rx_p and iface_tx_p file " << std::endl;
             return;
         }
     }

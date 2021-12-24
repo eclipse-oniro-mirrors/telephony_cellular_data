@@ -275,16 +275,13 @@ HWTEST_F(CellularDataTest, GetCellularDataState_ValidityTest_01, TestSize.Level2
     CellularDataTest::SetDefaultCellularDataSlotIdTest(CoreManager::DEFAULT_SLOT_ID);
     auto enabled = CellularDataTest::IsCellularDataEnabledTest();
     if (enabled == static_cast<int32_t>(DataSwitchCode::CELLULAR_DATA_ENABLED)) {
-        auto result = CellularDataTest::GetCellularDataStateTest();
-        ASSERT_TRUE(result == static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED));
-        // initiates another connection request
         std::string ident = IDENT_PREFIX + std::to_string(CoreManager::DEFAULT_SLOT_ID);
         uint64_t capability = 2;
         auto request = CellularDataTest::RequestNetTest(ident, capability);
         sleep(SLEEP_TIME);
         ASSERT_TRUE(request == static_cast<int32_t>(RequestNetCode::REQUEST_SUCCESS));
         // check connection state
-        result = CellularDataTest::GetCellularDataStateTest();
+        auto result = CellularDataTest::GetCellularDataStateTest();
         ASSERT_TRUE(result == static_cast<int32_t>(DataConnectionStatus::DATA_STATE_CONNECTED));
         auto release = CellularDataTest::ReleaseNetTest(ident, capability);
         ASSERT_TRUE(release == static_cast<int32_t>(ReleaseNetCode::RELEASE_SUCCESS));
@@ -304,6 +301,8 @@ HWTEST_F(CellularDataTest, RequestAndReleaseNet_ValidSlot_Test_01, TestSize.Leve
     if (enabledSwitch) {
         std::string ident = IDENT_PREFIX + std::to_string(CoreManager::DEFAULT_SLOT_ID);
         uint64_t capability = 1;
+        CellularDataTest::ReleaseNetTest(ident, capability);
+        sleep(SLEEP_TIME);
         auto request = CellularDataTest::RequestNetTest(ident, capability);
         ASSERT_TRUE(request == static_cast<int32_t>(RequestNetCode::REQUEST_SUCCESS));
         sleep(SLEEP_TIME);
@@ -328,12 +327,16 @@ HWTEST_F(CellularDataTest, RequestAndReleaseNet_ValidSlot_Test_02, TestSize.Leve
     auto enabledSwitch = CellularDataTest::IsCellularDataEnabledTest();
     if (enabledSwitch) {
         std::string ident = IDENT_PREFIX + std::to_string(CoreManager::DEFAULT_SLOT_ID);
-        uint64_t capability = 2;
+        uint64_t capability = 1;
+        // first disconnect default connection
+        CellularDataTest::ReleaseNetTest(ident, capability);
+        sleep(SLEEP_TIME);
+        capability = 2;
         auto request = CellularDataTest::RequestNetTest(ident, capability);
         sleep(SLEEP_TIME);
         ASSERT_TRUE(request == static_cast<int32_t>(RequestNetCode::REQUEST_SUCCESS));
         auto state = CellularDataTest::GetCellularDataStateTest();
-        ASSERT_TRUE(state == static_cast<int32_t>(DataConnectionStatus::DATA_STATE_CONNECTED));
+        ASSERT_TRUE(state == static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED));
         auto result = CellularDataTest::ReleaseNetTest(ident, capability);
         sleep(SLEEP_TIME);
         ASSERT_TRUE(result == static_cast<int32_t>(ReleaseNetCode::RELEASE_SUCCESS));
@@ -654,7 +657,7 @@ HWTEST_F(CellularDataTest, GetCellularDataState_Double_Invalid_Test02, TestSize.
     CellularDataTest::SetDefaultCellularDataSlotIdTest(CoreManager::SLOT_ID2 + 1);
     auto enabled = CellularDataTest::IsCellularDataEnabledTest();
     int32_t result  = static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED);
-        if (enabled == static_cast<int32_t>(DataSwitchCode::CELLULAR_DATA_ENABLED)) {
+    if (enabled == static_cast<int32_t>(DataSwitchCode::CELLULAR_DATA_ENABLED)) {
         std::string ident = IDENT_PREFIX + std::to_string(CoreManager::SLOT_ID2 + 1);
         uint64_t capability = 3;
         auto request = CellularDataTest::RequestNetTest(ident, capability);
