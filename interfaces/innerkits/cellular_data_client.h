@@ -16,6 +16,7 @@
 #ifndef CELLULAR_DATA_CLIENT_H
 #define CELLULAR_DATA_CLIENT_H
 
+#include <atomic>
 #include <singleton.h>
 
 #include "data_sim_account_callback.h"
@@ -360,8 +361,8 @@ private:
     sptr<ICellularDataManager> proxy_ { nullptr };
     sptr<IRemoteObject::DeathRecipient> deathRecipient_ { nullptr };
     sptr<SimAccountCallback> callback_ { nullptr };
-    static int32_t defaultCellularDataSlotId_;
-    static int32_t defaultCellularDataSimId_;
+    static std::atomic<int32_t> defaultCellularDataSlotId_;
+    static std::atomic<int32_t> defaultCellularDataSimId_;
     bool registerStatus_ = false;
 };
 } // namespace Telephony

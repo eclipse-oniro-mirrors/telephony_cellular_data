@@ -16,6 +16,8 @@
 #ifndef DATA_CONNECTION_MONITOR_H
 #define DATA_CONNECTION_MONITOR_H
 
+#include <atomic>
+
 #include "apn_holder.h"
 #include "tel_event_handler.h"
 #include "traffic_management.h"
@@ -118,8 +120,8 @@ private:
     std::unique_ptr<TrafficManagement> trafficManager_;
     std::unique_ptr<TrafficManagement> stallDetectionTrafficManager_;
     bool updateNetStat_ = false;
-    bool stallDetectionEnabled_ = false;
-    bool isScreenOn_ = false;
+    std::atomic<bool> stallDetectionEnabled_ = false;
+    std::atomic<bool> isScreenOn_ = false;
     int64_t noRecvPackets_ = 0;
     RecoveryState dataRecoveryState_ = RecoveryState::STATE_REQUEST_CONTEXT_LIST;
     CellDataFlowType dataFlowType_ = CellDataFlowType::DATA_FLOW_TYPE_NONE;

@@ -33,10 +33,10 @@ DataConnectionMonitor::DataConnectionMonitor(int32_t slotId) : TelEventHandler("
 
 void DataConnectionMonitor::HandleScreenStateChanged(bool isScreenOn)
 {
-    if (isScreenOn_ == isScreenOn) {
+    if (isScreenOn_.load() == isScreenOn) {
         return;
     }
-    isScreenOn_ = isScreenOn;
+    isScreenOn_.store(isScreenOn);
     const int32_t defSlotId = CoreManagerInner::GetInstance().GetDefaultCellularDataSlotId();
     if (slotId_ != defSlotId && !IsVsimEnabled()) {
         return;
@@ -70,7 +70,7 @@ bool DataConnectionMonitor::IsAggressiveRecovery()
  
 int32_t DataConnectionMonitor::GetStallDetectionPeriod()
 {
-    if (isScreenOn_ || IsAggressiveRecovery()) {
+    if (isScreenOn_.load() || IsAggressiveRecovery()) {
         return DATA_STALL_ALARM_AGGRESSIVE_DELAY_IN_MS_DEFAULT;
     }
     return DATA_STALL_ALARM_NON_AGGRESSIVE_DELAY_IN_MS_DEFAULT;
@@ -79,7 +79,7 @@ int32_t DataConnectionMonitor::GetStallDetectionPeriod()
 void DataConnectionMonitor::StartStallDetectionTimer()
 {
     TELEPHONY_LOGD("Slot%{public}d: start stall detection", slotId_);
-    stallDetectionEnabled_ = true;
+    stallDetectionEnabled_.store(true);
     int32_t stallDetectionPeriod = GetStallDetectionPeriod();
     TELEPHONY_LOGD("stallDetectionPeriod = %{public}d", stallDetectionPeriod);
     if (!HasInnerEvent(CellularDataEventCode::MSG_STALL_DETECTION_EVENT_ID)) {
@@ -111,7 +111,7 @@ __attribute__((no_sanitize("cfi"))) void DataConnectionMonitor::OnStallDetection
     }
     int32_t stallDetectionPeriod = GetStallDetectionPeriod();
     TELEPHONY_LOGD("stallDetectionPeriod = %{public}d", stallDetectionPeriod);
-    if (!HasInnerEvent(CellularDataEventCode::MSG_STALL_DETECTION_EVENT_ID) && stallDetectionEnabled_) {
+    if (!HasInnerEvent(CellularDataEventCode::MSG_STALL_DETECTION_EVENT_ID) && stallDetectionEnabled_.load()) {
         AppExecFwk::InnerEvent::Pointer event =
             AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_STALL_DETECTION_EVENT_ID);
         SendEvent(event, stallDetectionPeriod, Priority::LOW);
@@ -121,7 +121,7 @@ __attribute__((no_sanitize("cfi"))) void DataConnectionMonitor::OnStallDetection
 void DataConnectionMonitor::StopStallDetectionTimer()
 {
     TELEPHONY_LOGD("Slot%{public}d: stop stall detection", slotId_);
-    stallDetectionEnabled_ = false;
+    stallDetectionEnabled_.store(false);
     RemoveEvent(CellularDataEventCode::MSG_STALL_DETECTION_EVENT_ID);
 }
 
@@ -340,7 +340,7 @@ void DataConnectionMonitor::IsNeedDoRecovery(bool needDoRecovery)
     }
     int32_t stallDetectionPeriod = GetStallDetectionPeriod();
     TELEPHONY_LOGD("stallDetectionPeriod = %{public}d", stallDetectionPeriod);
-    if (!HasInnerEvent(CellularDataEventCode::MSG_STALL_DETECTION_EVENT_ID) && stallDetectionEnabled_) {
+    if (!HasInnerEvent(CellularDataEventCode::MSG_STALL_DETECTION_EVENT_ID) && stallDetectionEnabled_.load()) {
         AppExecFwk::InnerEvent::Pointer event =
             AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_STALL_DETECTION_EVENT_ID);
         SendEvent(event, stallDetectionPeriod, Priority::LOW);
