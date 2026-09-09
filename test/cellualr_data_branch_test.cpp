@@ -295,7 +295,7 @@ HWTEST_F(CellularStateMachineTest, Disconnecting_ProcessConnectTimeout_001, Func
     disconnecting->stateMachine_ = cellularMachine;
     auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_SM_DISCONNECT);
     auto destBefore = cellularMachine->stateMachineEventHandler_->destState_;
-    disconnecting->ProcessDisconnectTimeout(event);
+    cellularMachine->ProcessConnectionLostTimeout(event);
     // GetParam(0) != connectId(1) → "过期超时"早退不转移。改断同步语义 destState_ 调用前后不变
     // （原 IsInactiveState() 断言在异步 init 落地时恒真，天然竞态，b9 轮实证翻车）
     EXPECT_EQ(cellularMachine->stateMachineEventHandler_->destState_, destBefore);
@@ -319,7 +319,7 @@ HWTEST_F(CellularStateMachineTest, Disconnecting_ProcessConnectTimeout_002, Func
     disconnecting->stateMachine_ = cellularMachine;
     auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_SM_DISCONNECT);
     auto destBefore = cellularMachine->stateMachineEventHandler_->destState_;
-    disconnecting->ProcessDisconnectTimeout(event);
+    cellularMachine->ProcessConnectionLostTimeout(event);
     // 同 _001：早退不转移，断言 destState_ 不变（同步语义，时序无关）
     EXPECT_EQ(cellularMachine->stateMachineEventHandler_->destState_, destBefore);
 }
@@ -451,7 +451,7 @@ HWTEST_F(CellularStateMachineTest, Disconnecting_StateProcess_001, Function | Me
     auto event = AppExecFwk::InnerEvent::Get(RadioEvent::RADIO_RIL_DEACTIVATE_DATA_CALL);
     bool result = disconnecting->StateProcess(event);
     EXPECT_EQ(result, true);
-    event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_DISCONNECT_TIMEOUT_CHECK);
+    event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK);
     result = disconnecting->StateProcess(event);
     EXPECT_EQ(result, true);
     event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_SM_RIL_ADAPTER_HOST_DIED);
@@ -513,11 +513,11 @@ HWTEST_F(CellularStateMachineTest, InactiveStateProcess_001, Function | MediumTe
 }
 
 /**
- * @tc.number   Disconnecting_ProcessDisconnectTimeout_001
+ * @tc.number   Disconnecting_ProcessConnectionLostTimeout_001
  * @tc.name     test function branch
  * @tc.desc     Function test
  */
-HWTEST_F(CellularStateMachineTest, Disconnecting_ProcessDisconnectTimeout_001, Function | MediumTest | Level1)
+HWTEST_F(CellularStateMachineTest, Disconnecting_ProcessConnectionLostTimeout_001, Function | MediumTest | Level1)
 {
     if (cellularMachine == nullptr) {
         std::shared_ptr<CellularMachineTest> machine = std::make_shared<CellularMachineTest>();
@@ -525,10 +525,9 @@ HWTEST_F(CellularStateMachineTest, Disconnecting_ProcessDisconnectTimeout_001, F
         cellularMachine->Init();
     }
     auto disconnecting = std::static_pointer_cast<Disconnecting>(cellularMachine->disconnectingState_);
-    cellularMachine = nullptr;
     disconnecting->stateMachine_ = cellularMachine;
     auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_SM_DISCONNECT, 0);
-    disconnecting->ProcessDisconnectTimeout(event);
+    cellularMachine->ProcessConnectionLostTimeout(event);
     disconnecting->StateEnd();
     EXPECT_EQ(disconnecting->isActive_, false);
 }

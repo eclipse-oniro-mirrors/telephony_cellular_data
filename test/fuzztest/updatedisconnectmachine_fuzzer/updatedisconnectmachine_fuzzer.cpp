@@ -62,7 +62,7 @@ void UpdateDisconnectMachineFuzz(const uint8_t *data, size_t size)
 
     InnerEvent::Pointer event = InnerEvent::Get(intValue, object);
     disconnecting->StateProcess(event);
-    disconnecting->ProcessDisconnectTimeout(event);
+    cellularMachine->ProcessConnectionLostTimeout(event);
 
     defaultStatus->StateProcess(event);
     defaultStatus->ProcessConnectDone(event);

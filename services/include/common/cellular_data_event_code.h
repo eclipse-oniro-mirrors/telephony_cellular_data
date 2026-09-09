@@ -51,7 +51,7 @@ public:
     static const uint32_t MSG_GET_RIL_BANDWIDTH = BASE + 24;
     static const uint32_t MSG_SET_RIL_BANDWIDTH = BASE + 25;
     static const uint32_t MSG_CONNECT_TIMEOUT_CHECK = BASE + 26;
-    static const uint32_t MSG_DISCONNECT_TIMEOUT_CHECK = BASE + 27;
+    static const uint32_t MSG_CONNECTION_LOST_TIMEOUT_CHECK = BASE + 27;
     static const uint32_t MSG_DB_SETTING_ENABLE_CHANGED = BASE + 28;
     static const uint32_t MSG_DB_SETTING_ROAMING_CHANGED = BASE + 29;
     static const uint32_t MSG_SET_DATA_PERMITTED = BASE + 30;

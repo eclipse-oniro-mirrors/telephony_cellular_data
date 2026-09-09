@@ -99,6 +99,7 @@ private:
     void SetCid(const int32_t cid);
     void DoConnect(const DataConnectionParams &connectionParams);
     void FreeConnection(const DataDisconnectParams &params);
+    void ProcessConnectionLostTimeout(const AppExecFwk::InnerEvent::Pointer &event);
     void ResolveIp(std::vector<AddressInfo> &ipInfoArray);
     void ResolveDns(std::vector<AddressInfo> &dnsInfoArray);
     void ResolveRoute(std::vector<AddressInfo> &routeInfoArray, const std::string &name);
