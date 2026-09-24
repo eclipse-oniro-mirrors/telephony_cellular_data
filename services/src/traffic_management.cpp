@@ -34,16 +34,26 @@ void TrafficManagement::GetPacketData(int64_t &sendPackets, int64_t &recvPackets
     recvPackets = recvPackets_;
 }
 
-void TrafficManagement::UpdatePacketData()
+bool TrafficManagement::UpdatePacketData()
 {
     DataFlowStatistics dataState;
     const std::string interfaceName = GetIfaceName();
-    if (!interfaceName.empty()) {
-        sendPackets_ = dataState.GetIfaceTxPackets(interfaceName);
-        recvPackets_ = dataState.GetIfaceRxPackets(interfaceName);
+    if (interfaceName.empty()) {
+        TELEPHONY_LOGI("Slot%{public}d: interfaceName:%{public}s", slotId_, interfaceName.c_str());
+        return false;
     }
+    int64_t sendPackets = dataState.GetIfaceTxPackets(interfaceName);
+    int64_t recvPackets = dataState.GetIfaceRxPackets(interfaceName);
+    if (sendPackets < 0 || recvPackets < 0) {
+        TELEPHONY_LOGE("Slot%{public}d: get iface packets failed, sendPackets:%{public}" PRId64
+            " recvPackets:%{public}" PRId64, slotId_, sendPackets, recvPackets);
+        return false;
+    }
+    sendPackets_ = sendPackets;
+    recvPackets_ = recvPackets;
     TELEPHONY_LOGD("Slot%{public}d: sendPackets:%{public}" PRId64 " recvPackets:%{public}" PRId64,
         slotId_, sendPackets_, recvPackets_);
+    return true;
 }
 
 std::string TrafficManagement::GetIfaceName()

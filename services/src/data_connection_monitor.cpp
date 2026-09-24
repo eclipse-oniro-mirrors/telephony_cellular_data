@@ -282,24 +282,33 @@ void DataConnectionMonitor::UpdateDataFlowType()
     int64_t currentSentPackets = 0;
     int64_t currentRecvPackets = 0;
     trafficManager_->GetPacketData(previousSentPackets, previousRecvPackets);
-    trafficManager_->UpdatePacketData();
+    if (!trafficManager_->UpdatePacketData()) {
+        TELEPHONY_LOGE("Slot%{public}d: UpdateDataFlowType update packet data failed", slotId_);
+        return;
+    }
     trafficManager_->GetPacketData(currentSentPackets, currentRecvPackets);
     int64_t sentPackets = currentSentPackets - previousSentPackets;
     int64_t recvPackets = currentRecvPackets - previousRecvPackets;
+    if (currentSentPackets < previousSentPackets || currentRecvPackets < previousRecvPackets) {
+        // iface recreated and counters reset, count all traffic on the new iface this round
+        TELEPHONY_LOGI("Slot%{public}d: UpdateDataFlowType iface counter reset detected", slotId_);
+        sentPackets = currentSentPackets;
+        recvPackets = currentRecvPackets;
+    }
     CellDataFlowType previousDataFlowType = dataFlowType_;
-    if (previousSentPackets != 0 || previousRecvPackets != 0) {
-        if (sentPackets > 0 && recvPackets == 0) {
-            dataFlowType_ = CellDataFlowType::DATA_FLOW_TYPE_UP;
-        } else if (sentPackets == 0 && recvPackets > 0) {
-            dataFlowType_ = CellDataFlowType::DATA_FLOW_TYPE_DOWN;
-        } else if (sentPackets > 0 && recvPackets > 0) {
-            dataFlowType_ = CellDataFlowType::DATA_FLOW_TYPE_UP_DOWN;
-        } else {
-            dataFlowType_ = CellDataFlowType::DATA_FLOW_TYPE_NONE;
-        }
+    if (sentPackets > 0 && recvPackets == 0) {
+        dataFlowType_ = CellDataFlowType::DATA_FLOW_TYPE_UP;
+    } else if (sentPackets == 0 && recvPackets > 0) {
+        dataFlowType_ = CellDataFlowType::DATA_FLOW_TYPE_DOWN;
+    } else if (sentPackets > 0 && recvPackets > 0) {
+        dataFlowType_ = CellDataFlowType::DATA_FLOW_TYPE_UP_DOWN;
+    } else {
+        dataFlowType_ = CellDataFlowType::DATA_FLOW_TYPE_NONE;
     }
     if (previousDataFlowType != dataFlowType_) {
         StateNotification::GetInstance().OnUpDataFlowtype(slotId_, dataFlowType_);
+    } else {
+        TELEPHONY_LOGI("Slot%{public}d: UpdateDataFlowType no traffic change", slotId_);
     }
 }
 
