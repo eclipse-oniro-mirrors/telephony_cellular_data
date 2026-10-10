@@ -517,7 +517,6 @@ HWTEST_F(BranchTest, Telephony_CellularDataHandler_009, Function | MediumTest | 
     apn->SetApnState(PROFILE_STATE_CONNECTED);
     controller.cellularDataHandler_->ClearConnection(apn, reason);
     ASSERT_EQ(apn->GetApnState(), PROFILE_STATE_DISCONNECTING);
-
     apn->SetApnState(PROFILE_STATE_CONNECTED);
     controller.cellularDataHandler_->ClearAllConnections(reason);
     apn->SetApnState(PROFILE_STATE_CONNECTING);

@@ -90,6 +90,7 @@ private:
         { DisConnectionReason::REASON_CLEAR_CONNECTION, PdpErrorReason::PDP_ERR_TO_CLEAR_CONNECTION },
         { DisConnectionReason::REASON_CHANGE_CONNECTION, PdpErrorReason::PDP_ERR_TO_CHANGE_CONNECTION },
         { DisConnectionReason::REASON_PERMANENT_REJECT, PdpErrorReason::PDP_ERR_TO_PERMANENT_REJECT },
+        { DisConnectionReason::REASON_HANDOVER_CONNECTION, PdpErrorReason::PDP_ERR_NONE },
     };
     std::weak_ptr<CellularDataStateMachine> stateMachine_;
 };
