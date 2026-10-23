@@ -35,8 +35,10 @@ public:
 
     /**
      * Update packet data
+     *
+     * @return true if packet data updated successfully, otherwise false
      */
-    void UpdatePacketData();
+    bool UpdatePacketData();
 
 private:
     std::string GetIfaceName();

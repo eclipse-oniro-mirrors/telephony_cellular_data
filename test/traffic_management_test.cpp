@@ -151,9 +151,11 @@ HWTEST_F(TrafficManagementTest, TrafficManagementTest_004, Function | MediumTest
         });
     trafficManagement->sendPackets_ = 100;
     trafficManagement->recvPackets_ = 200;
-    trafficManagement->UpdatePacketData();
-    EXPECT_LE(trafficManagement->sendPackets_, 0);
-    EXPECT_LE(trafficManagement->recvPackets_, 0);
+    bool updateResult = trafficManagement->UpdatePacketData();
+    // iface not exists on test host, update failed and baseline kept
+    ASSERT_FALSE(updateResult);
+    EXPECT_EQ(trafficManagement->sendPackets_, 100);
+    EXPECT_EQ(trafficManagement->recvPackets_, 200);
 
     Mock::VerifyAndClearExpectations(mockSimManager);
 }
