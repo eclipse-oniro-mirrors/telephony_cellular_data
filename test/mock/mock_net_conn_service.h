@@ -142,6 +142,7 @@ public:
     MOCK_METHOD(int32_t, GetConnectOwnerUid, (const NetConnInfo &netConnInfo, int32_t &ownerUid));
     MOCK_METHOD(int32_t, GetSystemNetPortStates, (OHOS::NetManagerStandard::NetPortStatesInfo &netPortStatesInfo));
     MOCK_METHOD(int32_t, IsDeadFlowResetTargetBundle, (const std::string &bundleName, bool &flag));
+    MOCK_METHOD(int32_t, RenewDhcp, (int32_t netId), (override));
 };
 
 }  // namespace NetManagerStandard
