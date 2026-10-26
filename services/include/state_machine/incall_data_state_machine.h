@@ -53,6 +53,7 @@ private:
     int32_t GetTargetDataSlotId(int32_t defSlotId);
     void SetPrimarySlot(int32_t targetSlotId);
     bool CheckBackupNetworkIfAllow(int32_t targetSlotId);
+    void SwitchIncallDataSlot();
 
 private:
     friend class IdleState;
@@ -110,6 +111,7 @@ private:
     bool ProcessCallEnded(const AppExecFwk::InnerEvent::Pointer &event);
     bool ProcessSettingsOff(const AppExecFwk::InnerEvent::Pointer &event);
     bool ProcessDsdsChanged(const AppExecFwk::InnerEvent::Pointer &event);
+    bool ProcessCallStateCheck(const AppExecFwk::InnerEvent::Pointer &event);
 
 private:
     using Fun = std::function<bool(const AppExecFwk::InnerEvent::Pointer &data)>;
@@ -122,6 +124,8 @@ private:
             [this](const AppExecFwk::InnerEvent::Pointer &data) { return ProcessSettingsOff(data); } },
         { CellularDataEventCode::MSG_SM_INCALL_DATA_DSDS_CHANGED,
             [this](const AppExecFwk::InnerEvent::Pointer &data) { return ProcessDsdsChanged(data); } },
+        { CellularDataEventCode::MSG_SM_INCALL_DATA_CALL_STATE_CHECK,
+            [this](const AppExecFwk::InnerEvent::Pointer &data) { return ProcessCallStateCheck(data); } },
     };
     std::weak_ptr<IncallDataStateMachine> stateMachine_;
 };

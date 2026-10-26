@@ -83,6 +83,7 @@ public:
 #endif
     static const uint32_t MSG_RETRY_TO_LOAD_SIM_ACCOUNT = BASE + 55;
     static const uint32_t MSG_MCC_CHANGE_ACTIVATE_DELAY = BASE + 56;
+    static const uint32_t MSG_SM_INCALL_DATA_CALL_STATE_CHECK = BASE + 57;
 };
 } // namespace Telephony
 } // namespace OHOS
