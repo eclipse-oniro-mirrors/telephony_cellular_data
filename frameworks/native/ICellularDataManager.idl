@@ -46,7 +46,6 @@ interface OHOS.Telephony.ICellularDataManager {
     void GetIfSupportDunApn([out] boolean isSupportDun);
     void GetDefaultActReportInfo([in] int slotId, [out] ApnActivateReportInfoIpc info);
     void GetInternalActReportInfo([in] int slotId, [out] ApnActivateReportInfoIpc info);
-    void GetIntelligenceSwitchState([out] boolean switchState);
     void QueryApnIds([in] ApnInfo apnInfo, [out] List<unsigned int> apnIdList);
     void SetPreferApn([in] int apnId);
     void QueryAllApnInfo([out] List<ApnInfo> apnInfoList);

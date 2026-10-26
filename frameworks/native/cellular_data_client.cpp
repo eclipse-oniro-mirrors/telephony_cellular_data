@@ -432,16 +432,6 @@ int32_t CellularDataClient::InitCellularDataController(int32_t slotId)
     return proxy->InitCellularDataController(slotId);
 }
 
-int32_t CellularDataClient::GetIntelligenceSwitchState(bool &switchState)
-{
-    sptr<ICellularDataManager> proxy = GetProxy();
-    if (proxy == nullptr) {
-        TELEPHONY_LOGE("proxy is null");
-        return TELEPHONY_ERR_IPC_CONNECT_STUB_FAIL;
-    }
-    return proxy->GetIntelligenceSwitchState(switchState);
-}
-
 bool CellularDataClient::IsCellularDataSysAbilityExist(sptr<IRemoteObject> &object) __attribute__((no_sanitize("cfi")))
 {
     sptr<ISystemAbilityManager> sm = SystemAbilityManagerClient::GetInstance().GetSystemAbilityManager();
