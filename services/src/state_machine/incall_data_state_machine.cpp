@@ -134,6 +134,45 @@ bool IncallDataStateMachine::CheckBackupNetworkIfAllow(int32_t targetSlotId)
     return result;
 }
 
+void IncallDataStateMachine::SwitchIncallDataSlot()
+{
+    int32_t defaultSlotId = CoreManagerInner::GetInstance().GetDefaultCellularDataSlotId();
+    // LCOV_EXCL_START
+    int32_t targetSlotId = GetTargetDataSlotId(defaultSlotId);
+    if (defaultSlotId != targetSlotId && !CheckBackupNetworkIfAllow(targetSlotId)) {
+        bool fallBackToSelfSlot = slotId_ == CELLDATA_SLOT_ID_3 && CellularDataUtils::IsTstsModeEnabled() &&
+            CheckBackupNetworkIfAllow(slotId_);
+        if (!fallBackToSelfSlot) {
+            TELEPHONY_LOGI("Slot%{public}d: target slot %{public}d not allowed to switch",
+                slotId_, targetSlotId);
+            return;
+        }
+        // TSTS slot3 itself is a backup card: switch data to slot3 during the call,
+        // and restore the original default data slot after the call
+        targetSlotId = slotId_;
+        TELEPHONY_LOGI("Slot%{public}d: target slot not allowed, fall back to slot %{public}d",
+            slotId_, targetSlotId);
+    }
+    if (defaultSlotId == targetSlotId) {
+        return;
+    }
+    if (targetSlotId == slotId_ && slotId_ == CELLDATA_SLOT_ID_3) {
+        // schedule a delayed self-check in case the call ended event is lost;
+        // the restore reuses the primary/default slot comparison after the call
+        if (stateMachineEventHandler_ != nullptr) {
+            auto checkEvent = AppExecFwk::InnerEvent::Get(
+                CellularDataEventCode::MSG_SM_INCALL_DATA_CALL_STATE_CHECK);
+            stateMachineEventHandler_->SendEvent(checkEvent, INCALL_DATA_FALLBACK_CHECK_TIMEOUT_MS);
+        }
+    }
+    TransitionTo(activatingSecondaryState_);
+    CoreManagerInner::GetInstance().SetDefaultCellularDataSlotId(targetSlotId);
+    if (targetSlotId != slotId_) {
+        SetPrimarySlot(targetSlotId);
+    }
+    // LCOV_EXCL_STOP
+}
+
 void IncallDataStateMachine::UpdateCallState(int32_t state)
 {
     callState_ = state;
@@ -314,6 +353,11 @@ void IdleState::StateBegin()
     }
     isActive_ = true;
     stateMachine->SetCurrentState(shared_from_this());
+    if (stateMachine->stateMachineEventHandler_ != nullptr && stateMachine->stateMachineEventHandler_->HasInnerEvent(
+        CellularDataEventCode::MSG_SM_INCALL_DATA_CALL_STATE_CHECK)) {
+        stateMachine->stateMachineEventHandler_->RemoveEvent(
+            CellularDataEventCode::MSG_SM_INCALL_DATA_CALL_STATE_CHECK);
+    }
     if (stateMachine->GetCallState() == static_cast<int32_t>(TelCallStatus::CALL_STATUS_IDLE) ||
         stateMachine->GetCallState() == static_cast<int32_t>(TelCallStatus::CALL_STATUS_DISCONNECTED)) {
         std::shared_ptr<TelEventHandler> eventHandler = stateMachine->cellularDataHandler_.lock();
@@ -357,20 +401,7 @@ bool IdleState::ProcessCallStarted(const AppExecFwk::InnerEvent::Pointer &event)
         return NOT_PROCESSED;
     }
     if (stateMachine->IsIncallDataSwitchOn() && stateMachine->IsSecondaryCanActiveData()) {
-        int32_t defaultSlotId = CoreManagerInner::GetInstance().GetDefaultCellularDataSlotId();
-        // LCOV_EXCL_START
-        int32_t targetSlotId = stateMachine->GetTargetDataSlotId(defaultSlotId);
-        if (defaultSlotId != targetSlotId && !stateMachine->CheckBackupNetworkIfAllow(targetSlotId)) {
-            TELEPHONY_LOGI("Slot%{public}d: target slot %{public}d not allowed to switch",
-                stateMachine->GetSlotId(), targetSlotId);
-            return PROCESSED;
-        }
-        if (defaultSlotId != targetSlotId) {
-            stateMachine->TransitionTo(stateMachine->activatingSecondaryState_);
-            CoreManagerInner::GetInstance().SetDefaultCellularDataSlotId(targetSlotId);
-            stateMachine->SetPrimarySlot(targetSlotId);
-        }
-        // LCOV_EXCL_STOP
+        stateMachine->SwitchIncallDataSlot();
     }
     return PROCESSED;
 }
@@ -407,15 +438,7 @@ bool IdleState::ProcessSettingsOn(const AppExecFwk::InnerEvent::Pointer &event)
         return NOT_PROCESSED;
     }
     if (stateMachine->IsIncallDataSwitchOn() && stateMachine->IsSecondaryCanActiveData()) {
-        int32_t defaultSlotId = CoreManagerInner::GetInstance().GetDefaultCellularDataSlotId();
-        // LCOV_EXCL_START
-        int32_t targetSlotId = stateMachine->GetTargetDataSlotId(defaultSlotId);
-        if (defaultSlotId != targetSlotId) {
-            stateMachine->TransitionTo(stateMachine->activatingSecondaryState_);
-            CoreManagerInner::GetInstance().SetDefaultCellularDataSlotId(targetSlotId);
-            stateMachine->SetPrimarySlot(targetSlotId);
-        }
-        // LCOV_EXCL_STOP
+        stateMachine->SwitchIncallDataSlot();
     }
     return PROCESSED;
 }
@@ -429,15 +452,7 @@ bool IdleState::ProcessDsdsChanged(const AppExecFwk::InnerEvent::Pointer &event)
         return NOT_PROCESSED;
     }
     if (stateMachine->IsIncallDataSwitchOn() && stateMachine->IsSecondaryCanActiveData()) {
-        int32_t defaultSlotId = CoreManagerInner::GetInstance().GetDefaultCellularDataSlotId();
-        // LCOV_EXCL_START
-        int32_t targetSlotId = stateMachine->GetTargetDataSlotId(defaultSlotId);
-        if (defaultSlotId != targetSlotId) {
-            stateMachine->TransitionTo(stateMachine->activatingSecondaryState_);
-            CoreManagerInner::GetInstance().SetDefaultCellularDataSlotId(targetSlotId);
-            stateMachine->SetPrimarySlot(targetSlotId);
-        }
-        // LCOV_EXCL_STOP
+        stateMachine->SwitchIncallDataSlot();
     }
     return PROCESSED;
 }
@@ -525,6 +540,43 @@ bool SecondaryActiveState::ProcessSettingsOff(const AppExecFwk::InnerEvent::Poin
 bool SecondaryActiveState::ProcessDsdsChanged(const AppExecFwk::InnerEvent::Pointer &event)
 {
     TELEPHONY_LOGI("SecondaryActiveState::MSG_SM_INCALL_DATA_DSDS_CHANGED");
+    std::shared_ptr<IncallDataStateMachine> stateMachine = stateMachine_.lock();
+    if (stateMachine == nullptr) {
+        TELEPHONY_LOGE("stateMachine is null");
+        return NOT_PROCESSED;
+    }
+    if (stateMachine->GetCallState() == static_cast<int32_t>(TelCallStatus::CALL_STATUS_IDLE) ||
+        stateMachine->GetCallState() == static_cast<int32_t>(TelCallStatus::CALL_STATUS_DISCONNECTED)) {
+        // call already ended but the restore is not performed, e.g. the call ended event was lost;
+        // the deactivating state re-runs the primary/default slot comparison to restore
+        TELEPHONY_LOGI("Slot%{public}d: re-run restore on dsds changed", stateMachine->GetSlotId());
+        stateMachine->TransitionTo(stateMachine->deactivatingSecondaryState_);
+    }
+    return PROCESSED;
+}
+
+bool SecondaryActiveState::ProcessCallStateCheck(const AppExecFwk::InnerEvent::Pointer &event)
+{
+    TELEPHONY_LOGI("SecondaryActiveState::MSG_SM_INCALL_DATA_CALL_STATE_CHECK");
+    std::shared_ptr<IncallDataStateMachine> stateMachine = stateMachine_.lock();
+    if (stateMachine == nullptr) {
+        TELEPHONY_LOGE("stateMachine is null");
+        return NOT_PROCESSED;
+    }
+    if (stateMachine->GetCallState() == static_cast<int32_t>(TelCallStatus::CALL_STATUS_IDLE) ||
+        stateMachine->GetCallState() == static_cast<int32_t>(TelCallStatus::CALL_STATUS_DISCONNECTED)) {
+        // call already ended but the restore is not performed, restore by the
+        // primary/default slot comparison in the deactivating state
+        TELEPHONY_LOGI("Slot%{public}d: re-run restore on call state check", stateMachine->GetSlotId());
+        stateMachine->TransitionTo(stateMachine->deactivatingSecondaryState_);
+        return PROCESSED;
+    }
+    // still in call, renew the delayed self-check
+    if (stateMachine->stateMachineEventHandler_ != nullptr) {
+        auto checkEvent = AppExecFwk::InnerEvent::Get(
+            CellularDataEventCode::MSG_SM_INCALL_DATA_CALL_STATE_CHECK);
+        stateMachine->stateMachineEventHandler_->SendEvent(checkEvent, INCALL_DATA_FALLBACK_CHECK_TIMEOUT_MS);
+    }
     return PROCESSED;
 }
 

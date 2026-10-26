@@ -354,6 +354,7 @@ static constexpr const char *CELLULAR_DATA_COLUMN_KEYWORD = "KEYWORD";
 static constexpr const char *CELLULAR_DATA_COLUMN_VALUE = "VALUE";
 static constexpr const char *BACKUP_SIM_LIST_COLUMN_ENABLE = "backup_sim_list";
 static const int32_t VALID_MIN_BACKUP_NUM = 2;
+static const int32_t INCALL_DATA_FALLBACK_CHECK_TIMEOUT_MS = 5 * 60 * 1000;
 static const int32_t INVALID_SIM_ID = 0;
 static const int32_t INVALID_SLOT_ID = -1;
 static const int32_t CELLDATA_SLOT_ID_0 = 0;

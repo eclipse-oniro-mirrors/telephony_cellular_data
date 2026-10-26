@@ -144,6 +144,25 @@ public:
         return true;
     }
 
+    bool SetIncallDataSwitchOff()
+    {
+        auto settingHelper = CellularDataSettingsRdbHelper::GetInstance();
+        if (settingHelper == nullptr) {
+            return false;
+        }
+        Uri intelligenceNetworkUri(CELLULAR_DATA_SETTING_INTELLIGENCE_NETWORK_URI);
+        Uri smartDualCardUri(CELLULAR_DATA_SETTING_INTELLIGENCE_SWITCH_URI);
+        if (settingHelper->PutValue(intelligenceNetworkUri, INTELLIGENCE_NETWORK_COLUMN_ENABLE, 0) !=
+            TELEPHONY_ERR_SUCCESS) {
+            return false;
+        }
+        if (settingHelper->PutValue(smartDualCardUri, INTELLIGENCE_SWITCH_COLUMN_ENABLE, 0) !=
+            TELEPHONY_ERR_SUCCESS) {
+            return false;
+        }
+        return true;
+    }
+
     std::shared_ptr<IncallDataStateMachine> stateMachine_ = nullptr;
     std::shared_ptr<IncallDataTestHandler> handler_ = nullptr;
     MockSimManager *mockSimManager = nullptr;
@@ -256,8 +275,9 @@ HWTEST_F(IncallDataStateMachineBranchTest, IncallDataStateMachine_CheckBackupNet
 
 /**
  * @tc.number: IdleState_ProcessCallStarted_001
- * @tc.name: Test ProcessCallStarted when backup network is not allowed
- * @tc.desc: Verify ProcessCallStarted keeps idle state when target slot is not allowed to switch in TSTS mode
+ * @tc.name: Test ProcessCallStarted when backup network is not allowed and slot3 is a backup card
+ * @tc.desc: Verify ProcessCallStarted falls back to slot3 itself when target slot is not allowed
+ *           and slot3 is in the backup sim list in TSTS mode
  */
 HWTEST_F(IncallDataStateMachineBranchTest, IdleState_ProcessCallStarted_001, Function | MediumTest | Level3)
 {
@@ -282,16 +302,29 @@ HWTEST_F(IncallDataStateMachineBranchTest, IdleState_ProcessCallStarted_001, Fun
         .WillRepeatedly(DoAll(SetArgReferee<1>(static_cast<int32_t>(RadioTech::RADIO_TECHNOLOGY_LTE)), Return(0)));
     EXPECT_CALL(*mockSimManager, GetDefaultCellularDataSlotId())
         .WillRepeatedly(Return(CELLDATA_SLOT_ID_0));
+    // target slot 1 is not in the backup list
     SimLabel unmatchedLabel;
     unmatchedLabel.simType = SimType::PSIM;
     unmatchedLabel.index = 9;
-    EXPECT_CALL(*mockSimManager, GetSimLabel(_, _))
+    EXPECT_CALL(*mockSimManager, GetSimLabel(CELLDATA_SLOT_ID_1, _))
         .WillRepeatedly(DoAll(SetArgReferee<1>(unmatchedLabel), Return(0)));
+    // slot3 itself is a backup card (esim label index 2 matches "1,2,1")
+    SimLabel esimLabel;
+    esimLabel.simType = SimType::ESIM;
+    esimLabel.index = 2;
+    EXPECT_CALL(*mockSimManager, GetSimLabel(CELLDATA_SLOT_ID_3, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(esimLabel), Return(0)));
+    EXPECT_CALL(*mockSimManager, SetDefaultCellularDataSlotId(CELLDATA_SLOT_ID_3))
+        .Times(1)
+        .WillOnce(Return(0));
 
     auto idleState = std::static_pointer_cast<IdleState>(stateMachine_->idleState_);
     auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_SM_INCALL_DATA_CALL_STARTED);
     ASSERT_TRUE(idleState->ProcessCallStarted(event));
-    ASSERT_FALSE(stateMachine_->IsSecondaryActiveState());
+    ASSERT_EQ(stateMachine_->stateMachineEventHandler_->destState_, stateMachine_->activatingSecondaryState_);
+    // delayed self-check is scheduled in case the call ended event is lost
+    ASSERT_TRUE(stateMachine_->stateMachineEventHandler_->HasInnerEvent(
+        CellularDataEventCode::MSG_SM_INCALL_DATA_CALL_STATE_CHECK));
 }
 
 /**
@@ -337,6 +370,187 @@ HWTEST_F(IncallDataStateMachineBranchTest, IdleState_ProcessCallStarted_002, Fun
     ASSERT_EQ(stateMachine_->stateMachineEventHandler_->destState_, stateMachine_->activatingSecondaryState_);
 }
 
+
+/**
+ * @tc.number: IdleState_ProcessCallStarted_003
+ * @tc.name: Test ProcessCallStarted when neither target slot nor slot3 is a backup card
+ * @tc.desc: Verify ProcessCallStarted keeps idle state when target slot is not allowed and slot3 is
+ *           not in the backup sim list in TSTS mode
+ */
+HWTEST_F(IncallDataStateMachineBranchTest, IdleState_ProcessCallStarted_003, Function | MediumTest | Level3)
+{
+    system::SetParameter(PERSIST_TSTS_MODE, "1");
+    CreateIncallDataStateMachine(CELLDATA_SLOT_ID_3);
+    if (!SetIncallDataSwitchOn() || !WriteBackupSimList(BACKUP_SIM_LIST_VALUE_VALID)) {
+        GTEST_SKIP() << "datashare unavailable, skip slot3 not backup card case";
+    }
+    EXPECT_CALL(*mockSimManager, GetActiveSimAccountInfoList(_, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(std::vector<IccAccountInfo>()), Return(0)));
+    EXPECT_CALL(*mockSimManager, GetDsdsMode(_))
+        .WillRepeatedly(DoAll(SetArgReferee<0>(static_cast<int32_t>(DSDS_MODE_V2)), Return(0)));
+    EXPECT_CALL(*mockSimManager, GetPrimarySlotId(_))
+        .WillRepeatedly(DoAll(SetArgReferee<0>(CELLDATA_SLOT_ID_0), Return(0)));
+    EXPECT_CALL(*mockSimManager, HasSimCard(_, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(true), Return(0)));
+    ImsRegInfo registered;
+    registered.imsRegState = ImsRegState::IMS_REGISTERED;
+    EXPECT_CALL(*mockNetworkSearchManager, GetImsRegStatus(_, _, _))
+        .WillRepeatedly(DoAll(SetArgReferee<2>(registered), Return(0)));
+    EXPECT_CALL(*mockNetworkSearchManager, GetPsRadioTech(_, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(static_cast<int32_t>(RadioTech::RADIO_TECHNOLOGY_LTE)), Return(0)));
+    EXPECT_CALL(*mockSimManager, GetDefaultCellularDataSlotId())
+        .WillRepeatedly(Return(CELLDATA_SLOT_ID_0));
+    SimLabel unmatchedLabel;
+    unmatchedLabel.simType = SimType::PSIM;
+    unmatchedLabel.index = 9;
+    EXPECT_CALL(*mockSimManager, GetSimLabel(_, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(unmatchedLabel), Return(0)));
+    EXPECT_CALL(*mockSimManager, SetDefaultCellularDataSlotId(_)).Times(0);
+
+    auto idleState = std::static_pointer_cast<IdleState>(stateMachine_->idleState_);
+    auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_SM_INCALL_DATA_CALL_STARTED);
+    ASSERT_TRUE(idleState->ProcessCallStarted(event));
+    ASSERT_FALSE(stateMachine_->IsSecondaryActiveState());
+}
+
+/**
+ * @tc.number: IdleState_ProcessCallStarted_004
+ * @tc.name: Test ProcessCallStarted when backup network is not allowed on non-TSTS secondary slot
+ * @tc.desc: Verify ProcessCallStarted keeps idle state when target slot is not allowed on a normal slot
+ */
+HWTEST_F(IncallDataStateMachineBranchTest, IdleState_ProcessCallStarted_004, Function | MediumTest | Level3)
+{
+    CreateIncallDataStateMachine(CELLDATA_SLOT_ID_1);
+    if (!SetIncallDataSwitchOn() || !WriteBackupSimList(BACKUP_SIM_LIST_VALUE_VALID)) {
+        GTEST_SKIP() << "datashare unavailable, skip non-TSTS not allowed case";
+    }
+    EXPECT_CALL(*mockSimManager, GetActiveSimAccountInfoList(_, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(std::vector<IccAccountInfo>()), Return(0)));
+    EXPECT_CALL(*mockSimManager, GetDsdsMode(_))
+        .WillRepeatedly(DoAll(SetArgReferee<0>(static_cast<int32_t>(DSDS_MODE_V2)), Return(0)));
+    EXPECT_CALL(*mockSimManager, GetPrimarySlotId(_))
+        .WillRepeatedly(DoAll(SetArgReferee<0>(CELLDATA_SLOT_ID_0), Return(0)));
+    EXPECT_CALL(*mockSimManager, HasSimCard(_, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(true), Return(0)));
+    ImsRegInfo registered;
+    registered.imsRegState = ImsRegState::IMS_REGISTERED;
+    EXPECT_CALL(*mockNetworkSearchManager, GetImsRegStatus(_, _, _))
+        .WillRepeatedly(DoAll(SetArgReferee<2>(registered), Return(0)));
+    EXPECT_CALL(*mockNetworkSearchManager, GetPsRadioTech(_, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(static_cast<int32_t>(RadioTech::RADIO_TECHNOLOGY_LTE)), Return(0)));
+    EXPECT_CALL(*mockSimManager, GetDefaultCellularDataSlotId())
+        .WillRepeatedly(Return(CELLDATA_SLOT_ID_0));
+    SimLabel unmatchedLabel;
+    unmatchedLabel.simType = SimType::PSIM;
+    unmatchedLabel.index = 9;
+    EXPECT_CALL(*mockSimManager, GetSimLabel(_, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(unmatchedLabel), Return(0)));
+    EXPECT_CALL(*mockSimManager, SetDefaultCellularDataSlotId(_)).Times(0);
+
+    auto idleState = std::static_pointer_cast<IdleState>(stateMachine_->idleState_);
+    auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_SM_INCALL_DATA_CALL_STARTED);
+    ASSERT_TRUE(idleState->ProcessCallStarted(event));
+    ASSERT_FALSE(stateMachine_->IsSecondaryActiveState());
+}
+
+/**
+ * @tc.number: IdleState_ProcessSettingsOn_001
+ * @tc.name: Test ProcessSettingsOn falls back to slot3 when target slot is not allowed
+ * @tc.desc: Verify ProcessSettingsOn switches data to slot3 when target slot is not allowed
+ *           and slot3 is a backup card in TSTS mode
+ */
+HWTEST_F(IncallDataStateMachineBranchTest, IdleState_ProcessSettingsOn_001, Function | MediumTest | Level3)
+{
+    system::SetParameter(PERSIST_TSTS_MODE, "1");
+    CreateIncallDataStateMachine(CELLDATA_SLOT_ID_3);
+    if (!SetIncallDataSwitchOn() || !WriteBackupSimList(BACKUP_SIM_LIST_VALUE_VALID)) {
+        GTEST_SKIP() << "datashare unavailable, skip settings on fallback case";
+    }
+    EXPECT_CALL(*mockSimManager, GetActiveSimAccountInfoList(_, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(std::vector<IccAccountInfo>()), Return(0)));
+    EXPECT_CALL(*mockSimManager, GetDsdsMode(_))
+        .WillRepeatedly(DoAll(SetArgReferee<0>(static_cast<int32_t>(DSDS_MODE_V2)), Return(0)));
+    EXPECT_CALL(*mockSimManager, GetPrimarySlotId(_))
+        .WillRepeatedly(DoAll(SetArgReferee<0>(CELLDATA_SLOT_ID_0), Return(0)));
+    EXPECT_CALL(*mockSimManager, HasSimCard(_, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(true), Return(0)));
+    ImsRegInfo registered;
+    registered.imsRegState = ImsRegState::IMS_REGISTERED;
+    EXPECT_CALL(*mockNetworkSearchManager, GetImsRegStatus(_, _, _))
+        .WillRepeatedly(DoAll(SetArgReferee<2>(registered), Return(0)));
+    EXPECT_CALL(*mockNetworkSearchManager, GetPsRadioTech(_, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(static_cast<int32_t>(RadioTech::RADIO_TECHNOLOGY_LTE)), Return(0)));
+    EXPECT_CALL(*mockSimManager, GetDefaultCellularDataSlotId())
+        .WillRepeatedly(Return(CELLDATA_SLOT_ID_0));
+    SimLabel unmatchedLabel;
+    unmatchedLabel.simType = SimType::PSIM;
+    unmatchedLabel.index = 9;
+    EXPECT_CALL(*mockSimManager, GetSimLabel(CELLDATA_SLOT_ID_1, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(unmatchedLabel), Return(0)));
+    SimLabel esimLabel;
+    esimLabel.simType = SimType::ESIM;
+    esimLabel.index = 2;
+    EXPECT_CALL(*mockSimManager, GetSimLabel(CELLDATA_SLOT_ID_3, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(esimLabel), Return(0)));
+    EXPECT_CALL(*mockSimManager, SetDefaultCellularDataSlotId(CELLDATA_SLOT_ID_3))
+        .Times(1)
+        .WillOnce(Return(0));
+
+    auto idleState = std::static_pointer_cast<IdleState>(stateMachine_->idleState_);
+    auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_SM_INCALL_DATA_SETTINGS_ON);
+    ASSERT_TRUE(idleState->ProcessSettingsOn(event));
+    ASSERT_EQ(stateMachine_->stateMachineEventHandler_->destState_, stateMachine_->activatingSecondaryState_);
+}
+
+/**
+ * @tc.number: IdleState_ProcessDsdsChanged_001
+ * @tc.name: Test ProcessDsdsChanged falls back to slot3 when target slot is not allowed
+ * @tc.desc: Verify ProcessDsdsChanged switches data to slot3 when target slot is not allowed
+ *           and slot3 is a backup card in TSTS mode
+ */
+HWTEST_F(IncallDataStateMachineBranchTest, IdleState_ProcessDsdsChanged_001, Function | MediumTest | Level3)
+{
+    system::SetParameter(PERSIST_TSTS_MODE, "1");
+    CreateIncallDataStateMachine(CELLDATA_SLOT_ID_3);
+    if (!SetIncallDataSwitchOn() || !WriteBackupSimList(BACKUP_SIM_LIST_VALUE_VALID)) {
+        GTEST_SKIP() << "datashare unavailable, skip dsds changed fallback case";
+    }
+    EXPECT_CALL(*mockSimManager, GetActiveSimAccountInfoList(_, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(std::vector<IccAccountInfo>()), Return(0)));
+    EXPECT_CALL(*mockSimManager, GetDsdsMode(_))
+        .WillRepeatedly(DoAll(SetArgReferee<0>(static_cast<int32_t>(DSDS_MODE_V2)), Return(0)));
+    EXPECT_CALL(*mockSimManager, GetPrimarySlotId(_))
+        .WillRepeatedly(DoAll(SetArgReferee<0>(CELLDATA_SLOT_ID_0), Return(0)));
+    EXPECT_CALL(*mockSimManager, HasSimCard(_, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(true), Return(0)));
+    ImsRegInfo registered;
+    registered.imsRegState = ImsRegState::IMS_REGISTERED;
+    EXPECT_CALL(*mockNetworkSearchManager, GetImsRegStatus(_, _, _))
+        .WillRepeatedly(DoAll(SetArgReferee<2>(registered), Return(0)));
+    EXPECT_CALL(*mockNetworkSearchManager, GetPsRadioTech(_, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(static_cast<int32_t>(RadioTech::RADIO_TECHNOLOGY_LTE)), Return(0)));
+    EXPECT_CALL(*mockSimManager, GetDefaultCellularDataSlotId())
+        .WillRepeatedly(Return(CELLDATA_SLOT_ID_0));
+    SimLabel unmatchedLabel;
+    unmatchedLabel.simType = SimType::PSIM;
+    unmatchedLabel.index = 9;
+    EXPECT_CALL(*mockSimManager, GetSimLabel(CELLDATA_SLOT_ID_1, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(unmatchedLabel), Return(0)));
+    SimLabel esimLabel;
+    esimLabel.simType = SimType::ESIM;
+    esimLabel.index = 2;
+    EXPECT_CALL(*mockSimManager, GetSimLabel(CELLDATA_SLOT_ID_3, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(esimLabel), Return(0)));
+    EXPECT_CALL(*mockSimManager, SetDefaultCellularDataSlotId(CELLDATA_SLOT_ID_3))
+        .Times(1)
+        .WillOnce(Return(0));
+
+    auto idleState = std::static_pointer_cast<IdleState>(stateMachine_->idleState_);
+    auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_SM_INCALL_DATA_DSDS_CHANGED);
+    ASSERT_TRUE(idleState->ProcessDsdsChanged(event));
+    ASSERT_EQ(stateMachine_->stateMachineEventHandler_->destState_, stateMachine_->activatingSecondaryState_);
+}
+
 /**
  * @tc.number: SecondaryActiveState_ProcessCallEnded_001
  * @tc.name: Test ProcessCallEnded transitions in secondary active state
@@ -360,6 +574,102 @@ HWTEST_F(IncallDataStateMachineBranchTest, SecondaryActiveState_ProcessCallEnded
         .WillOnce(DoAll(SetArgReferee<0>(CELLDATA_SLOT_ID_0), Return(0)));
     ASSERT_TRUE(secondaryActiveState->ProcessCallEnded(event));
     ASSERT_EQ(stateMachine_->stateMachineEventHandler_->destState_, stateMachine_->idleState_);
+}
+
+/**
+ * @tc.number: SecondaryActiveState_ProcessCallEnded_002
+ * @tc.name: Test ProcessCallEnded restores data slot after slot3 fallback
+ * @tc.desc: Verify ProcessCallEnded transitions to deactivating state when the default slot
+ *           falls back to slot3 and differs from the primary slot, so the deactivating state
+ *           restores the primary slot by the default/primary comparison
+ */
+HWTEST_F(IncallDataStateMachineBranchTest, SecondaryActiveState_ProcessCallEnded_002, Function | MediumTest | Level3)
+{
+    system::SetParameter(PERSIST_TSTS_MODE, "1");
+    CreateIncallDataStateMachine(CELLDATA_SLOT_ID_3);
+    stateMachine_->UpdateCallState(static_cast<int32_t>(TelCallStatus::CALL_STATUS_IDLE));
+    auto secondaryActiveState = std::static_pointer_cast<SecondaryActiveState>(stateMachine_->secondaryActiveState_);
+    auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_SM_INCALL_DATA_CALL_ENDED);
+
+    // default slot falls back to slot3 and differs from the primary slot, restore is required
+    EXPECT_CALL(*mockSimManager, GetDefaultCellularDataSlotId()).WillOnce(Return(CELLDATA_SLOT_ID_3));
+    EXPECT_CALL(*mockSimManager, GetPrimarySlotId(_))
+        .WillOnce(DoAll(SetArgReferee<0>(CELLDATA_SLOT_ID_0), Return(0)));
+    ASSERT_TRUE(secondaryActiveState->ProcessCallEnded(event));
+    ASSERT_EQ(stateMachine_->stateMachineEventHandler_->destState_, stateMachine_->deactivatingSecondaryState_);
+}
+
+/**
+ * @tc.number: SecondaryActiveState_ProcessSettingsOff_001
+ * @tc.name: Test ProcessSettingsOff restores data slot when the incall data switch is off
+ * @tc.desc: Verify ProcessSettingsOff transitions to deactivating state when the default slot
+ *           differs from the primary slot after the fallback switch to slot3
+ */
+HWTEST_F(IncallDataStateMachineBranchTest, SecondaryActiveState_ProcessSettingsOff_001, Function | MediumTest | Level3)
+{
+    CreateIncallDataStateMachine(CELLDATA_SLOT_ID_3);
+    if (!SetIncallDataSwitchOff()) {
+        GTEST_SKIP() << "datashare unavailable, skip settings off restore case";
+    }
+    auto secondaryActiveState = std::static_pointer_cast<SecondaryActiveState>(stateMachine_->secondaryActiveState_);
+    auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_SM_INCALL_DATA_SETTINGS_OFF);
+
+    // default slot falls back to slot3 and differs from the primary slot, restore is required
+    EXPECT_CALL(*mockSimManager, GetDefaultCellularDataSlotId()).WillOnce(Return(CELLDATA_SLOT_ID_3));
+    EXPECT_CALL(*mockSimManager, GetPrimarySlotId(_))
+        .WillOnce(DoAll(SetArgReferee<0>(CELLDATA_SLOT_ID_0), Return(0)));
+    ASSERT_TRUE(secondaryActiveState->ProcessSettingsOff(event));
+    ASSERT_EQ(stateMachine_->stateMachineEventHandler_->destState_, stateMachine_->deactivatingSecondaryState_);
+}
+
+/**
+ * @tc.number: SecondaryActiveState_ProcessDsdsChanged_001
+ * @tc.name: Test ProcessDsdsChanged re-runs the restore when the call already ended
+ * @tc.desc: Verify ProcessDsdsChanged does nothing while still in call, and re-runs the
+ *           primary/default slot comparison restore when the call state is already idle
+ */
+HWTEST_F(IncallDataStateMachineBranchTest, SecondaryActiveState_ProcessDsdsChanged_001,
+    Function | MediumTest | Level3)
+{
+    auto secondaryActiveState = std::static_pointer_cast<SecondaryActiveState>(stateMachine_->secondaryActiveState_);
+    auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_SM_INCALL_DATA_DSDS_CHANGED);
+
+    // still in call, no transition
+    stateMachine_->UpdateCallState(static_cast<int32_t>(TelCallStatus::CALL_STATUS_DIALING));
+    ASSERT_TRUE(secondaryActiveState->ProcessDsdsChanged(event));
+    ASSERT_NE(stateMachine_->stateMachineEventHandler_->destState_, stateMachine_->deactivatingSecondaryState_);
+
+    // call already ended, re-run the restore in case the call ended event was lost
+    stateMachine_->UpdateCallState(static_cast<int32_t>(TelCallStatus::CALL_STATUS_IDLE));
+    ASSERT_TRUE(secondaryActiveState->ProcessDsdsChanged(event));
+    ASSERT_EQ(stateMachine_->stateMachineEventHandler_->destState_, stateMachine_->deactivatingSecondaryState_);
+}
+
+/**
+ * @tc.number: SecondaryActiveState_ProcessCallStateCheck_001
+ * @tc.name: Test ProcessCallStateCheck delayed self-check after slot3 fallback
+ * @tc.desc: Verify ProcessCallStateCheck renews the delayed check while still in call, and re-runs
+ *           the primary/default slot comparison restore when the call already ended
+ */
+HWTEST_F(IncallDataStateMachineBranchTest, SecondaryActiveState_ProcessCallStateCheck_001,
+    Function | MediumTest | Level3)
+{
+    auto secondaryActiveState = std::static_pointer_cast<SecondaryActiveState>(stateMachine_->secondaryActiveState_);
+    auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_SM_INCALL_DATA_CALL_STATE_CHECK);
+
+    // still in call, renew the delayed self-check
+    stateMachine_->UpdateCallState(static_cast<int32_t>(TelCallStatus::CALL_STATUS_DIALING));
+    ASSERT_TRUE(secondaryActiveState->ProcessCallStateCheck(event));
+    ASSERT_TRUE(stateMachine_->stateMachineEventHandler_->HasInnerEvent(
+        CellularDataEventCode::MSG_SM_INCALL_DATA_CALL_STATE_CHECK));
+    ASSERT_NE(stateMachine_->stateMachineEventHandler_->destState_, stateMachine_->deactivatingSecondaryState_);
+
+    // call already ended, re-run the restore in case the call ended event was lost
+    stateMachine_->UpdateCallState(static_cast<int32_t>(TelCallStatus::CALL_STATUS_IDLE));
+    stateMachine_->stateMachineEventHandler_->RemoveEvent(
+        CellularDataEventCode::MSG_SM_INCALL_DATA_CALL_STATE_CHECK);
+    ASSERT_TRUE(secondaryActiveState->ProcessCallStateCheck(event));
+    ASSERT_EQ(stateMachine_->stateMachineEventHandler_->destState_, stateMachine_->deactivatingSecondaryState_);
 }
 
 /**
@@ -387,6 +697,36 @@ HWTEST_F(IncallDataStateMachineBranchTest, DeactivatingSecondaryState_StateBegin
         .WillOnce(DoAll(SetArgReferee<0>(CELLDATA_SLOT_ID_0), Return(0)));
     deactivatingSecondaryState->StateBegin();
     ASSERT_EQ(stateMachine_->stateMachineEventHandler_->destState_, stateMachine_->idleState_);
+}
+
+/**
+ * @tc.number: DeactivatingSecondaryState_StateBegin_002
+ * @tc.name: Test DeactivatingSecondaryState StateBegin restores the primary slot after slot3 fallback
+ * @tc.desc: Verify StateBegin restores the primary slot by the default/primary comparison after
+ *           the fallback switch to slot3, and the pending delayed self-check is cleared back in idle state
+ */
+HWTEST_F(IncallDataStateMachineBranchTest, DeactivatingSecondaryState_StateBegin_002, Function | MediumTest | Level3)
+{
+    system::SetParameter(PERSIST_TSTS_MODE, "1");
+    CreateIncallDataStateMachine(CELLDATA_SLOT_ID_3);
+    auto deactivatingSecondaryState =
+        std::static_pointer_cast<DeactivatingSecondaryState>(stateMachine_->deactivatingSecondaryState_);
+
+    // default slot falls back to slot3 and differs from the primary slot
+    EXPECT_CALL(*mockSimManager, GetDefaultCellularDataSlotId()).WillOnce(Return(CELLDATA_SLOT_ID_3));
+    EXPECT_CALL(*mockSimManager, GetPrimarySlotId(_))
+        .WillOnce(DoAll(SetArgReferee<0>(CELLDATA_SLOT_ID_0), Return(0)));
+    EXPECT_CALL(*mockSimManager, SetDefaultCellularDataSlotId(CELLDATA_SLOT_ID_0))
+        .Times(1)
+        .WillOnce(Return(0));
+    deactivatingSecondaryState->StateBegin();
+    ASSERT_EQ(stateMachine_->stateMachineEventHandler_->destState_, stateMachine_->idleState_);
+
+    auto idleState = std::static_pointer_cast<IdleState>(stateMachine_->idleState_);
+    idleState->StateBegin();
+    // pending delayed self-check is cleared when back to idle state
+    ASSERT_FALSE(stateMachine_->stateMachineEventHandler_->HasInnerEvent(
+        CellularDataEventCode::MSG_SM_INCALL_DATA_CALL_STATE_CHECK));
 }
 
 /**
