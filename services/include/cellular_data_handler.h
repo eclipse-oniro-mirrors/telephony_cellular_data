@@ -76,7 +76,6 @@ public:
     void IsNeedDoRecovery(bool needDoRecovery) const;
     void RegisterDataSettingObserver();
     void UnRegisterDataSettingObserver();
-    int32_t GetIntelligenceSwitchState(bool &switchState);
     void HandleUpdateNetInfo(const AppExecFwk::InnerEvent::Pointer &event);
     bool UpdateNetworkInfo();
     bool IsSupportDunApn();

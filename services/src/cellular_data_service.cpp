@@ -96,27 +96,6 @@ int32_t CellularDataService::Dump(std::int32_t fd, const std::vector<std::u16str
     return TELEPHONY_ERR_FAIL;
 }
 
-int32_t CellularDataService::GetIntelligenceSwitchState(bool &switchState)
-{
-    if (!TelephonyPermission::CheckCallerIsSystemApp()) {
-        TELEPHONY_LOGE("Non-system applications use system APIs!");
-        return TELEPHONY_ERR_ILLEGAL_USE_OF_SYSTEM_API;
-    }
-    if (!TelephonyPermission::CheckPermission(Permission::GET_TELEPHONY_STATE)) {
-        int32_t slotId;
-        CellularDataService::GetDefaultCellularDataSlotId(slotId);
-        CellularDataHiSysEvent::WriteDataActivateFaultEvent(
-            slotId, switchState, CellularDataErrorCode::DATA_ERROR_PERMISSION_ERROR, Permission::SET_TELEPHONY_STATE);
-        return TELEPHONY_ERR_PERMISSION_ERR;
-    }
-    std::shared_ptr<CellularDataController> cellularDataController = GetCellularDataController(DEFAULT_SIM_SLOT_ID);
-    if (cellularDataController == nullptr) {
-        TELEPHONY_LOGE("cellularDataControllers is null, slotId=%{public}d", DEFAULT_SIM_SLOT_ID);
-        return TELEPHONY_ERR_LOCAL_PTR_NULL;
-    }
-    return cellularDataController->GetIntelligenceSwitchState(switchState);
-}
-
 bool CellularDataService::Init()
 {
 #ifdef OHOS_BUILD_ENABLE_TELEPHONY_EXT

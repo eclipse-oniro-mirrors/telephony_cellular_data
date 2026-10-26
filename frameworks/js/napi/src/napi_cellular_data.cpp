@@ -1012,22 +1012,6 @@ static napi_value EnableIntelligenceSwitch(napi_env env, napi_callback_info info
     return value;
 }
 
-static napi_value GetIntelligenceSwitchState(napi_env env, napi_callback_info info)
-{
-    size_t parameterCount = 1;
-    napi_value parameters[] = { nullptr };
-    napi_value thisVar = nullptr;
-    void *data = nullptr;
-    bool switchState = false;
-    napi_get_cb_info(env, info, &parameterCount, parameters, &thisVar, &data);
-    if (parameterCount == 0) {
-        CellularDataClient::GetInstance().GetIntelligenceSwitchState(switchState);
-    }
-    napi_value value = nullptr;
-    NAPI_CALL(env, napi_get_boolean(env, switchState, &value));
-    return value;
-}
-
 template<typename T>
 static bool HandleDeferredResult(
     napi_env env, const AsyncContext1<T> &asyncContext, JsError error, bool funcIgnoreReturnVal)
@@ -1578,7 +1562,6 @@ napi_value RegistCellularData(napi_env env, napi_value exports)
         DECLARE_NAPI_WRITABLE_FUNCTION("setDefaultCellularDataSlotId", SetDefaultCellularDataSlotId),
         DECLARE_NAPI_WRITABLE_FUNCTION("getCellularDataFlowType", GetCellularDataFlowType),
         DECLARE_NAPI_WRITABLE_FUNCTION("enableIntelligenceSwitch", EnableIntelligenceSwitch),
-        DECLARE_NAPI_WRITABLE_FUNCTION("getIntelligenceSwitchState", GetIntelligenceSwitchState),
         DECLARE_NAPI_WRITABLE_FUNCTION("queryApnIds", QueryApnIds),
         DECLARE_NAPI_WRITABLE_FUNCTION("setPreferredApn", SetPreferredApn),
         DECLARE_NAPI_WRITABLE_FUNCTION("queryAllApns", QueryAllApns),

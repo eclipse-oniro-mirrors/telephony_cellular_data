@@ -76,7 +76,6 @@ public:
     int32_t IsNeedDoRecovery(int32_t slotId, bool needDoRecovery) override;
     int32_t EnableIntelligenceSwitch(bool enable) override;
     int32_t InitCellularDataController(int32_t slotId) override;
-    int32_t GetIntelligenceSwitchState(bool &switchState) override;
     int32_t EstablishAllApnsIfConnectable(int32_t slotId) override;
     int32_t GetCellularDataSupplierId(int32_t slotId, uint64_t capability, uint32_t &supplierId) override;
     int32_t CorrectNetSupplierNoAvailable(int32_t slotId) override;
