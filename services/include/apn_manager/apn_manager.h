@@ -61,6 +61,7 @@ private:
     void MergePdpProfile(PdpProfile &newProfile, PdpProfile &oldProfile);
     bool GetPreferId(int32_t slotId, std::string &errMsg);
     int32_t PushApnItem(int32_t count, int32_t slotId, sptr<ApnItem> extraApnItem);
+    bool HasAnyConnectedStateInner() const;
 
 private:
     static const std::map<std::string, int32_t> apnIdApnNameMap_;
@@ -70,6 +71,7 @@ private:
     std::vector<sptr<ApnHolder>> apnHolders_;
     std::map<int32_t, sptr<ApnHolder>> apnIdApnHolderMap_;
     std::vector<sptr<ApnHolder>> sortedApnHolders_;
+    mutable std::shared_mutex apnHolderMutex_;
     std::shared_mutex mutex_;
     int32_t preferId_ = -1;
     bool preferIdChangedByMerge_ = false;

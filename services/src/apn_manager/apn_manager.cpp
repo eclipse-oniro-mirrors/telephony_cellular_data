@@ -103,6 +103,7 @@ void ApnManager::InitApnHolders()
 
 sptr<ApnHolder> ApnManager::FindApnHolderById(const int32_t id) const
 {
+    std::shared_lock<std::shared_mutex> lock(apnHolderMutex_);
     if (apnIdApnHolderMap_.empty()) {
         TELEPHONY_LOGE("apnIdApnHolderMap_ empty");
         return nullptr;
@@ -251,6 +252,7 @@ void ApnManager::AddApnHolder(const std::string &apnType, const int32_t priority
         return;
     }
     apnHolder->SetApnState(PROFILE_STATE_IDLE);
+    std::unique_lock<std::shared_mutex> lock(apnHolderMutex_);
     apnHolders_.push_back(apnHolder);
     apnIdApnHolderMap_.insert(std::pair<int32_t, sptr<ApnHolder>>(apnId, apnHolder));
     sortedApnHolders_.emplace_back(apnHolder);
@@ -271,6 +273,7 @@ sptr<ApnHolder> ApnManager::GetApnHolder(const std::string &apnType) const
         TELEPHONY_LOGE("APN INVALID ID");
         return nullptr;
     }
+    std::shared_lock<std::shared_mutex> lock(apnHolderMutex_);
     std::map<int32_t, sptr<ApnHolder>>::const_iterator it = apnIdApnHolderMap_.find(apnId);
     if (it != apnIdApnHolderMap_.end()) {
         return it->second;
@@ -281,11 +284,13 @@ sptr<ApnHolder> ApnManager::GetApnHolder(const std::string &apnType) const
 
 std::vector<sptr<ApnHolder>> ApnManager::GetAllApnHolder() const
 {
+    std::shared_lock<std::shared_mutex> lock(apnHolderMutex_);
     return apnHolders_;
 }
 
 std::vector<sptr<ApnHolder>> ApnManager::GetSortApnHolder() const
 {
+    std::shared_lock<std::shared_mutex> lock(apnHolderMutex_);
     return sortedApnHolders_;
 }
 
@@ -488,6 +493,7 @@ bool ApnManager::IsDataConnectionNotUsed(const std::shared_ptr<CellularDataState
         TELEPHONY_LOGE("CellularDataHandler:stateMachine is null");
         return false;
     }
+    std::shared_lock<std::shared_mutex> lock(apnHolderMutex_);
     for (const sptr<ApnHolder> &apnHolder : apnHolders_) {
         if (apnHolder == nullptr) {
             TELEPHONY_LOGE("apn holder is null");
@@ -502,7 +508,7 @@ bool ApnManager::IsDataConnectionNotUsed(const std::shared_ptr<CellularDataState
     return true;
 }
 
-bool ApnManager::HasAnyConnectedState() const
+bool HasAnyConnectedStateInner() const;
 {
     for (const sptr<ApnHolder> &apnHolder : apnHolders_) {
         if (apnHolder == nullptr) {
@@ -517,13 +523,20 @@ bool ApnManager::HasAnyConnectedState() const
     return false;
 }
 
+bool ApnManager::HasAnyConnectedState() const
+{
+    std::shared_lock<std::shared_mutex> lock(apnHolderMutex_);
+    return HasAnyConnectedStateInner();
+}
+
 ApnProfileState ApnManager::GetOverallApnState() const
 {
+    std::shared_lock<std::shared_mutex> lock(apnHolderMutex_);
     if (apnHolders_.empty()) {
         TELEPHONY_LOGE("apn overall state is STATE_IDLE");
         return ApnProfileState::PROFILE_STATE_IDLE;
     }
-    if (HasAnyConnectedState()) {
+    if (HasAnyConnectedStateInner()) {
         TELEPHONY_LOGD("apn overall state is STATE_CONNECTED");
         return ApnProfileState::PROFILE_STATE_CONNECTED;
     }
@@ -540,6 +553,7 @@ ApnProfileState ApnManager::GetOverallApnState() const
             failState = true;
         }
     }
+    lock.unlock();
     if (failState) {
         TELEPHONY_LOGD("apn overall state is STATE_IDLE");
         return ApnProfileState::PROFILE_STATE_IDLE;
@@ -550,6 +564,7 @@ ApnProfileState ApnManager::GetOverallApnState() const
 
 ApnProfileState ApnManager::GetOverallDefaultApnState() const
 {
+    std::shared_lock<std::shared_mutex> lock(apnHolderMutex_);
     if (apnHolders_.empty()) {
         TELEPHONY_LOGE("apn overall state is STATE_IDLE");
         return ApnProfileState::PROFILE_STATE_IDLE;
@@ -568,6 +583,7 @@ ApnProfileState ApnManager::GetOverallDefaultApnState() const
             internalApnState = apnHolder->GetApnState();
         }
     }
+    lock.unlock();
     HILOG_COMM_IMPL(LOG_INFO, LOG_DOMAIN, TELEPHONY_LOG_TAG,
         "defaultApnState is %{public}d, internalApnState is %{public}d", defaultApnState, internalApnState);
     for (auto apnState : apnStateArr_) {
@@ -686,6 +702,7 @@ bool ApnManager::IsPreferredApnUserEdited()
 
 void ApnManager::ClearAllApnBad()
 {
+    std::shared_lock<std::shared_mutex> lock(apnHolderMutex_);
     for (const sptr<ApnHolder> &apnHolder : apnHolders_) {
         if (apnHolder != nullptr) {
             apnHolder->SetApnBadState(false);
