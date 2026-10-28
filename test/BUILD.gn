@@ -20,7 +20,19 @@ ohos_unittest("tel_cellular_data_ext_test") {
   test_suite = "tel_cellular_data_ext_test"
   module_out_path = part_name + "/" + test_module + "/" + test_suite
 
+  # 与系统侧产品库（tel_cellular_data_static 等）保持相同的 CFI 配置：
+  # cfi_cross_dso 开启后，系统 so 反向调用测试二进制内的函数（事件处理/mock 虚函数）
+  # 需要在测试二进制的 __cfi_check 表中注册 type id，否则设备上运行时 CFI 校验失败
+  # 直接 SIGABRT（整套件 unavailable）。
+  sanitize = {
+    cfi = true
+    cfi_cross_dso = true
+    debug = false
+  }
+  branch_protector_ret = "pac_ret"
+
   sources = [
+    "$SOURCE_DIR/test/mock/mock_telephony_permission.cpp",
     "$SOURCE_DIR/test/apn_manager_test.cpp",
     "$SOURCE_DIR/test/cellular_data_handler_test.cpp",
     "$SOURCE_DIR/test/data_access_token.cpp",
@@ -39,6 +51,7 @@ ohos_unittest("tel_cellular_data_ext_test") {
     "$SOURCE_DIR/services/include/utils",
     "$SOURCE_DIR/services/include/apn_manager",
     "$SOURCE_DIR/services/telephony_ext_wrapper/include",
+    "$SOURCE_DIR/test/mock",
   ]
 
   deps = [
@@ -94,6 +107,16 @@ ohos_unittest("tel_cellular_data_test") {
   test_module = "cellular_data"
   test_suite = "tel_cellular_data_test"
   module_out_path = part_name + "/" + test_module + "/" + test_suite
+
+  # 同 tel_cellular_data_ext_test：与系统侧 CFI 配置对齐，防跨 DSO 校验失败。
+  # blocklist 见 test/cfi_blocklist.txt（gmock/gtest 头文件模板代码不插桩）。
+  sanitize = {
+    cfi = true
+    cfi_cross_dso = true
+    debug = false
+    blocklist = "cfi_blocklist.txt"
+  }
+  branch_protector_ret = "pac_ret"
 
   sources = [
     "$SOURCE_DIR/test/data_access_token.cpp",
@@ -163,6 +186,14 @@ ohos_unittest("tel_cellular_state_machine_test") {
   test_suite = "tel_cellular_state_machine_test"
   module_out_path = part_name + "/" + test_module + "/" + test_suite
 
+  # 同 tel_cellular_data_ext_test：与系统侧 CFI 配置对齐，防跨 DSO 校验失败。
+  sanitize = {
+    cfi = true
+    cfi_cross_dso = true
+    debug = false
+  }
+  branch_protector_ret = "pac_ret"
+
   sources = [
     "$SOURCE_DIR/test/cellular_state_machine_test.cpp",
     "$SOURCE_DIR/test/data_access_token.cpp",
@@ -229,6 +260,14 @@ ohos_unittest("tel_cellular_state_branch_test") {
   test_suite = "tel_cellular_state_branch_test"
   module_out_path = part_name + "/" + test_module + "/" + test_suite
 
+  # 同 tel_cellular_data_ext_test：与系统侧 CFI 配置对齐，防跨 DSO 校验失败。
+  sanitize = {
+    cfi = true
+    cfi_cross_dso = true
+    debug = false
+  }
+  branch_protector_ret = "pac_ret"
+
   sources = [
     "$SOURCE_DIR/test/cellualr_data_branch_test.cpp",
     "$SOURCE_DIR/test/data_access_token.cpp",
@@ -294,10 +333,22 @@ ohos_unittest("tel_cellular_data_client_test") {
   test_suite = "tel_cellular_data_client_test"
   module_out_path = part_name + "/" + test_module + "/" + test_suite
 
+  # 同 tel_cellular_data_ext_test：与系统侧 CFI 配置对齐，防跨 DSO 校验失败。
+  # blocklist 见 test/cfi_blocklist.txt：gmock/gtest 头文件模板代码不插桩，
+  # mock 方法本体（test/mock/）保持插桩注册，满足系统 so 反向虚调用校验。
+  sanitize = {
+    cfi = true
+    cfi_cross_dso = true
+    debug = false
+    blocklist = "cfi_blocklist.txt"
+  }
+  branch_protector_ret = "pac_ret"
+
   sources = [
     "$SOURCE_DIR/test/cellular_data_client_test.cpp",
     "$SOURCE_DIR/test/cellular_data_service_test.cpp",
     "$SOURCE_DIR/test/data_access_token.cpp",
+    "$SOURCE_DIR/test/mock/mock_telephony_permission.cpp",
   ]
 
   include_dirs = [
@@ -360,6 +411,14 @@ ohos_unittest("tel_cellular_data_traffic_test") {
   test_module = "cellular_data"
   test_suite = "tel_cellular_data_traffic_test"
   module_out_path = part_name + "/" + test_module + "/" + test_suite
+
+  # 同 tel_cellular_data_ext_test：与系统侧 CFI 配置对齐，防跨 DSO 校验失败。
+  sanitize = {
+    cfi = true
+    cfi_cross_dso = true
+    debug = false
+  }
+  branch_protector_ret = "pac_ret"
 
   sources = [
     "$SOURCE_DIR/test/cellular_data_dump_helper_test.cpp",

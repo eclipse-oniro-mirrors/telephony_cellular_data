@@ -27,6 +27,7 @@
 #include "cellular_data_roaming_observer.h"
 #include "cellular_data_settings_rdb_helper.h"
 #include "cellular_data_airplane_observer.h"
+#include "utils/test_async_utils.h"
 
 namespace OHOS {
 namespace Telephony {
@@ -50,7 +51,7 @@ public:
 
     static std::shared_ptr<CellularDataHandler> createCellularDataHandler()
     {
-        std::shared_ptr<CellularDataHandler> cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+        std::shared_ptr<CellularDataHandler> cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
         return cellularDataHandler;
     }
 };

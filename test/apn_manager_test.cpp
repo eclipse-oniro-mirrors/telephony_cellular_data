@@ -25,6 +25,7 @@
 #include "tel_event_handler.h"
 #include "pdp_profile_data.h"
 #include "telephony_ext_wrapper.h"
+#include "utils/test_async_utils.h"
 
 namespace OHOS {
 namespace Telephony {
@@ -55,7 +56,18 @@ void ApnManagerTest::TearDown()
 class StateMachineTest : public TelEventHandler {
 public:
     StateMachineTest() : TelEventHandler("StateMachineTest") {}
-    ~StateMachineTest() = default;
+    ~StateMachineTest()
+    {
+        // 用例结束先停机排空 FFRT 队列再析构，规避 TelEventQueue 生命周期竞态（DT Signal 6）
+        if (cellularDataStateMachine_ != nullptr) {
+            if (cellularDataStateMachine_->cdConnectionManager_ != nullptr) {
+                TestAsyncUtils::DrainStateMachine(cellularDataStateMachine_->cdConnectionManager_.get());
+            }
+            TestAsyncUtils::DrainStateMachine(cellularDataStateMachine_.get());
+            cellularDataStateMachine_ = nullptr;
+        }
+        TestAsyncUtils::DrainTelEventHandler(this);
+    }
     std::shared_ptr<CellularDataStateMachine> CreateCellularDataStateMachine(int32_t slotId);
 
 public:
@@ -1738,6 +1750,174 @@ HWTEST_F(ApnManagerTest, IsPreferIdChangedByMerge_002, Function | MediumTest | L
     apnManager->MergePdpProfile(newProfile, oldProfile);
     EXPECT_FALSE(apnManager->IsPreferIdChangedByMerge());
     EXPECT_EQ(apnManager->preferId_, 100);
+}
+
+/**
+ * @tc.number   FindBestCapability_006
+ * @tc.name     test function branch
+ * @tc.desc     Function test
+ */
+HWTEST_F(ApnManagerTest, FindBestCapability_006, Function | MediumTest | Level1)
+{
+    uint64_t capabilities = 1L << NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI1;
+    NetManagerStandard::NetCap netCap = apnManager->FindBestCapability(capabilities);
+    ASSERT_EQ(netCap, NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI1);
+}
+
+/**
+ * @tc.number   FindBestCapability_007
+ * @tc.name     test function branch
+ * @tc.desc     Function test
+ */
+HWTEST_F(ApnManagerTest, FindBestCapability_007, Function | MediumTest | Level1)
+{
+    uint64_t capabilities = 1L << NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI2;
+    NetManagerStandard::NetCap netCap = apnManager->FindBestCapability(capabilities);
+    ASSERT_EQ(netCap, NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI2);
+}
+
+/**
+ * @tc.number   FindBestCapability_008
+ * @tc.name     test function branch
+ * @tc.desc     Function test
+ */
+HWTEST_F(ApnManagerTest, FindBestCapability_008, Function | MediumTest | Level1)
+{
+    uint64_t capabilities = 1L << NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI3;
+    NetManagerStandard::NetCap netCap = apnManager->FindBestCapability(capabilities);
+    ASSERT_EQ(netCap, NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI3);
+}
+
+/**
+ * @tc.number   FindBestCapability_009
+ * @tc.name     test function branch
+ * @tc.desc     Function test
+ */
+HWTEST_F(ApnManagerTest, FindBestCapability_009, Function | MediumTest | Level1)
+{
+    uint64_t capabilities = 1L << NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI4;
+    NetManagerStandard::NetCap netCap = apnManager->FindBestCapability(capabilities);
+    ASSERT_EQ(netCap, NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI4);
+}
+
+/**
+ * @tc.number   FindBestCapability_010
+ * @tc.name     test function branch
+ * @tc.desc     Function test
+ */
+HWTEST_F(ApnManagerTest, FindBestCapability_010, Function | MediumTest | Level1)
+{
+    uint64_t capabilities = 1L << NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI5;
+    NetManagerStandard::NetCap netCap = apnManager->FindBestCapability(capabilities);
+    ASSERT_EQ(netCap, NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI5);
+}
+
+/**
+ * @tc.number   FindBestCapability_011
+ * @tc.name     test function branch
+ * @tc.desc     Function test
+ */
+HWTEST_F(ApnManagerTest, FindBestCapability_011, Function | MediumTest | Level1)
+{
+    uint64_t capabilities = 1L << NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI6;
+    NetManagerStandard::NetCap netCap = apnManager->FindBestCapability(capabilities);
+    ASSERT_EQ(netCap, NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI6);
+}
+
+/**
+ * @tc.number   AddApnHolder_001
+ * @tc.name     test function branch
+ * @tc.desc     Function test
+ */
+HWTEST_F(ApnManagerTest, AddApnHolder_001, TestSize.Level0)
+{
+    apnManager->apnIdApnHolderMap_.clear();
+    EXPECT_EQ(apnManager->FindApnHolderById(0), nullptr);
+    std::string apnType = "hello";
+    int32_t priority = 123;
+    EXPECT_EQ(apnManager->FindApnIdByApnName(apnType), DATA_CONTEXT_ROLE_INVALID_ID);
+    apnManager->AddApnHolder(apnType, priority);
+    EXPECT_EQ(apnManager->FindApnTypeByApnName("abc"), static_cast<uint64_t>(ApnTypes::NONETYPE));
+}
+
+/**
+ * @tc.number   ReportApnInfo_001
+ * @tc.name     test function branch
+ * @tc.desc     Function test
+ */
+HWTEST_F(ApnManagerTest, ReportApnInfo_001, TestSize.Level0)
+{
+    int32_t slotId = 123;
+    PdpProfile apnData;
+    apnManager->ReportApnInfo(slotId, apnData);
+    EXPECT_EQ(apnData.apnTypes, "");
+    apnData.apnTypes = "hello";
+    apnManager->ReportApnInfo(slotId, apnData);
+}
+
+/**
+ * @tc.number   GetOverallApnState_001
+ * @tc.name     test function branch
+ * @tc.desc     Function test
+ */
+HWTEST_F(ApnManagerTest, GetOverallApnState_001, TestSize.Level0)
+{
+    sptr<ApnHolder> apnHolder = std::make_unique<ApnHolder>(DATA_CONTEXT_ROLE_DEFAULT,
+        static_cast<int32_t>(DataContextPriority::PRIORITY_LOW)).release();
+    apnHolder->apnState_ = ApnProfileState::PROFILE_STATE_FAILED;
+    apnManager->apnHolders_.push_back(nullptr);
+    apnManager->apnHolders_.push_back(apnHolder);
+    auto result = apnManager->GetOverallApnState();
+    EXPECT_EQ(result, ApnProfileState::PROFILE_STATE_FAILED);
+}
+
+/**
+ * @tc.number   GetOverallDefaultApnState_001
+ * @tc.name     test function branch
+ * @tc.desc     Function test
+ */
+HWTEST_F(ApnManagerTest, GetOverallDefaultApnState_001, TestSize.Level0)
+{
+    sptr<ApnHolder> apnHolder = std::make_unique<ApnHolder>(DATA_CONTEXT_ROLE_DEFAULT,
+        static_cast<int32_t>(DataContextPriority::PRIORITY_LOW)).release();
+    apnHolder->apnState_ = ApnProfileState::PROFILE_STATE_FAILED;
+    apnManager->apnHolders_.push_back(nullptr);
+    apnManager->apnHolders_.push_back(apnHolder);
+    auto result = apnManager->GetOverallDefaultApnState();
+    EXPECT_EQ(result, ApnProfileState::PROFILE_STATE_IDLE);
+}
+
+/**
+ * @tc.number   FindCapabilityByApnId_001
+ * @tc.name     test function branch
+ * @tc.desc     Function test
+ */
+HWTEST_F(ApnManagerTest, FindCapabilityByApnId_001, TestSize.Level1)
+{
+    uint64_t expected = NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI1;
+    int32_t apnId = DATA_CONTEXT_ROLE_SNSSAI1_ID;
+    uint64_t actual = apnManager->FindCapabilityByApnId(apnId);
+    EXPECT_EQ(actual, expected);
+    expected = NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI2;
+    apnId = DATA_CONTEXT_ROLE_SNSSAI2_ID;
+    actual = apnManager->FindCapabilityByApnId(apnId);
+    EXPECT_EQ(actual, expected);
+    expected = NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI3;
+    apnId = DATA_CONTEXT_ROLE_SNSSAI3_ID;
+    actual = apnManager->FindCapabilityByApnId(apnId);
+    EXPECT_EQ(actual, expected);
+    expected = NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI4;
+    apnId = DATA_CONTEXT_ROLE_SNSSAI4_ID;
+    actual = apnManager->FindCapabilityByApnId(apnId);
+    EXPECT_EQ(actual, expected);
+    expected = NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI5;
+    apnId = DATA_CONTEXT_ROLE_SNSSAI5_ID;
+    actual = apnManager->FindCapabilityByApnId(apnId);
+    EXPECT_EQ(actual, expected);
+    expected = NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI6;
+    apnId = DATA_CONTEXT_ROLE_SNSSAI6_ID;
+    actual = apnManager->FindCapabilityByApnId(apnId);
+    EXPECT_EQ(actual, expected);
 }
 } // namespace Telephony
 } // namespace OHOS

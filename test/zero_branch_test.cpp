@@ -46,6 +46,7 @@
 #include "gtest/gtest.h"
 #include "inactive.h"
 #include "incall_data_state_machine.h"
+#include "mock/mock_telephony_permission.h"
 #include "net_manager_call_back.h"
 #include "net_manager_tactics_call_back.h"
 #include "network_search_callback.h"
@@ -57,6 +58,7 @@
 #include "uri.h"
 #include "apn_attribute.h"
 #include "icellular_data_manager.h"
+#include "utils/test_async_utils.h"
 
 namespace OHOS {
 namespace Telephony {
@@ -92,12 +94,29 @@ void BranchTest::TearDownTestCase() {}
 
 void BranchTest::SetUp() {}
 
-void BranchTest::TearDown() {}
+void BranchTest::TearDown()
+{
+    // 释放权限打桩单例：本套件内 TelephonyPermission 已被链接期 mock 抢占
+    // （见 test/mock/mock_telephony_permission.cpp），未配置期望时默认拒绝；
+    // 用例（如 004/005）设置的放行期望随单例销毁，避免跨用例残留。
+    MockTelephonyPermission::ReleaseMockTelephonyPermission();
+}
 
 class StateMachineTest : public TelEventHandler {
 public:
     StateMachineTest() : TelEventHandler("StateMachineTest") {}
-    ~StateMachineTest() = default;
+    ~StateMachineTest()
+    {
+        // 用例结束先停机排空 FFRT 队列再析构，规避 TelEventQueue 生命周期竞态（DT Signal 6）
+        if (cellularDataStateMachine_ != nullptr) {
+            if (cellularDataStateMachine_->cdConnectionManager_ != nullptr) {
+                TestAsyncUtils::DrainStateMachine(cellularDataStateMachine_->cdConnectionManager_.get());
+            }
+            TestAsyncUtils::DrainStateMachine(cellularDataStateMachine_.get());
+            cellularDataStateMachine_ = nullptr;
+        }
+        TestAsyncUtils::DrainTelEventHandler(this);
+    }
     std::shared_ptr<CellularDataStateMachine> CreateCellularDataConnect(int32_t slotId);
 
 public:
@@ -122,7 +141,15 @@ std::shared_ptr<CellularDataStateMachine> StateMachineTest::CreateCellularDataCo
 class IncallStateMachineTest : public TelEventHandler {
 public:
     IncallStateMachineTest() : TelEventHandler("IncallStateMachineTest") {}
-    ~IncallStateMachineTest() = default;
+    ~IncallStateMachineTest()
+    {
+        // 用例结束先停机排空 FFRT 队列再析构，规避 TelEventQueue 生命周期竞态（DT Signal 6）
+        if (incallStateMachine_ != nullptr) {
+            TestAsyncUtils::DrainStateMachine(incallStateMachine_.get());
+            incallStateMachine_ = nullptr;
+        }
+        TestAsyncUtils::DrainTelEventHandler(this);
+    }
     std::shared_ptr<IncallDataStateMachine> CreateIncallDataStateMachine();
     int32_t Init(int32_t callState, int32_t slotId);
 public:
@@ -266,7 +293,7 @@ HWTEST_F(BranchTest, Telephony_CellularDataHandler_003, Function | MediumTest | 
     cellularDataHandler.ClearAllConnections(reason);
     cellularDataHandler.ChangeConnectionForDsds(false);
     cellularDataHandler.ChangeConnectionForDsds(true);
-    cellularDataHandler.connectionManager_ = std::make_shared<DataConnectionManager>(INVALID_SLOTID);
+    cellularDataHandler.connectionManager_ = TestAsyncUtils::MakeDrainedStateMachine<DataConnectionManager>(INVALID_SLOTID);
     cellularDataHandler.ClearAllConnections(reason);
     cellularDataHandler.EstablishAllApnsIfConnectable();
     cellularDataHandler.UpdatePhysicalConnectionState(true);
@@ -280,7 +307,7 @@ HWTEST_F(BranchTest, Telephony_CellularDataHandler_003, Function | MediumTest | 
     event = nullptr;
     cellularDataHandler.MsgEstablishDataConnection(event);
     ASSERT_FALSE(cellularDataHandler.HasAnyHigherPriorityConnection(apnHolder));
-    cellularDataHandler.connectionManager_ = std::make_shared<DataConnectionManager>(INVALID_SLOTID);
+    cellularDataHandler.connectionManager_ = TestAsyncUtils::MakeDrainedStateMachine<DataConnectionManager>(INVALID_SLOTID);
     ASSERT_FALSE(cellularDataHandler.HasInternetCapability(INVALID_CID));
     ASSERT_EQ(cellularDataHandler.GetDataRecoveryState(), 0);
     cellularDataHandler.DisconnectDataComplete(event);
@@ -936,6 +963,11 @@ HWTEST_F(BranchTest, Telephony_CellularDataService_003, Function | MediumTest | 
  */
 HWTEST_F(BranchTest, Telephony_CellularDataService_004, Function | MediumTest | Level3)
 {
+    // 权限打桩放行：GetApnState/GetDataRecoveryState 等按测试意图走参数/空指针分支，
+    // 排除设备权限策略与 atm 真实 IPC 差异（详见 test/mock/mock_telephony_permission.h）。
+    auto permissionMock = MockTelephonyPermission::GetOrCreateMockTelephonyPermission();
+    ON_CALL(*permissionMock, CheckPermission(testing::_)).WillByDefault(testing::Return(true));
+    ON_CALL(*permissionMock, CheckCallerIsSystemApp()).WillByDefault(testing::Return(true));
     DataAccessToken token;
     CellularDataService service;
     std::vector<std::u16string> strV;
@@ -969,6 +1001,10 @@ HWTEST_F(BranchTest, Telephony_CellularDataService_004, Function | MediumTest | 
  */
 HWTEST_F(BranchTest, Telephony_CellularDataService_005, Function | MediumTest | Level3)
 {
+    // 同 004：权限打桩放行，恢复用例作者预期的特权环境判定。
+    auto permissionMock = MockTelephonyPermission::GetOrCreateMockTelephonyPermission();
+    ON_CALL(*permissionMock, CheckPermission(testing::_)).WillByDefault(testing::Return(true));
+    ON_CALL(*permissionMock, CheckCallerIsSystemApp()).WillByDefault(testing::Return(true));
     DataAccessToken token;
     CellularDataService service;
     std::vector<std::u16string> strV;
@@ -2199,7 +2235,7 @@ HWTEST_F(BranchTest, CellularDataSettingsRdbHelper_Test_03, Function | MediumTes
  */
 HWTEST_F(BranchTest, CreatorDataShareHelper_Test_01, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     EXPECT_NE(cellularDataHandler, nullptr);
     std::shared_ptr<DataShare::DataShareHelper> helper = nullptr;
     helper = cellularDataHandler->CreatorDataShareHelper();
@@ -2881,8 +2917,8 @@ HWTEST_F(BranchTest, CellularDataUtils_GetDsdsModeForSlots_007, Function | Mediu
 HWTEST_F(BranchTest, IncallDataStateMachine_GetTargetDataSlotId_001, Function | MediumTest | Level3)
 {
     system::SetParameter(PERSIST_TSTS_MODE, "0");
-    auto handler = std::make_shared<StateMachineTest>();
-    auto stateMachine = std::make_shared<IncallDataStateMachine>();
+    auto handler = TestAsyncUtils::MakeDrainedTelEventHandler<StateMachineTest>();
+    auto stateMachine = TestAsyncUtils::MakeDrainedStateMachine<IncallDataStateMachine>();
     sptr<ApnManager> apnManager = nullptr;
     stateMachine->Init(0, CELLDATA_SLOT_ID_3, handler, apnManager);
     int32_t targetSlotId = stateMachine->GetTargetDataSlotId(CELLDATA_SLOT_ID_0);
@@ -2892,8 +2928,8 @@ HWTEST_F(BranchTest, IncallDataStateMachine_GetTargetDataSlotId_001, Function | 
 HWTEST_F(BranchTest, IncallDataStateMachine_GetTargetDataSlotId_002, Function | MediumTest | Level3)
 {
     system::SetParameter(PERSIST_TSTS_MODE, "1");
-    auto handler = std::make_shared<StateMachineTest>();
-    auto stateMachine = std::make_shared<IncallDataStateMachine>();
+    auto handler = TestAsyncUtils::MakeDrainedTelEventHandler<StateMachineTest>();
+    auto stateMachine = TestAsyncUtils::MakeDrainedStateMachine<IncallDataStateMachine>();
     sptr<ApnManager> apnManager = nullptr;
     stateMachine->Init(0, CELLDATA_SLOT_ID_3, handler, apnManager);
     int32_t targetSlotId = stateMachine->GetTargetDataSlotId(CELLDATA_SLOT_ID_0);
@@ -2903,8 +2939,8 @@ HWTEST_F(BranchTest, IncallDataStateMachine_GetTargetDataSlotId_002, Function | 
 HWTEST_F(BranchTest, IncallDataStateMachine_GetTargetDataSlotId_003, Function | MediumTest | Level3)
 {
     system::SetParameter(PERSIST_TSTS_MODE, "1");
-    auto handler = std::make_shared<StateMachineTest>();
-    auto stateMachine = std::make_shared<IncallDataStateMachine>();
+    auto handler = TestAsyncUtils::MakeDrainedTelEventHandler<StateMachineTest>();
+    auto stateMachine = TestAsyncUtils::MakeDrainedStateMachine<IncallDataStateMachine>();
     sptr<ApnManager> apnManager = nullptr;
     stateMachine->Init(0, CELLDATA_SLOT_ID_0, handler, apnManager);
     int32_t targetSlotId = stateMachine->GetTargetDataSlotId(CELLDATA_SLOT_ID_1);
@@ -2914,8 +2950,8 @@ HWTEST_F(BranchTest, IncallDataStateMachine_GetTargetDataSlotId_003, Function | 
 HWTEST_F(BranchTest, IncallDataStateMachine_GetTargetDataSlotId_004, Function | MediumTest | Level3)
 {
     system::SetParameter(PERSIST_TSTS_MODE, "1");
-    auto handler = std::make_shared<StateMachineTest>();
-    auto stateMachine = std::make_shared<IncallDataStateMachine>();
+    auto handler = TestAsyncUtils::MakeDrainedTelEventHandler<StateMachineTest>();
+    auto stateMachine = TestAsyncUtils::MakeDrainedStateMachine<IncallDataStateMachine>();
     sptr<ApnManager> apnManager = nullptr;
     stateMachine->Init(0, CELLDATA_SLOT_ID_1, handler, apnManager);
     int32_t targetSlotId = stateMachine->GetTargetDataSlotId(CELLDATA_SLOT_ID_0);
@@ -2925,8 +2961,8 @@ HWTEST_F(BranchTest, IncallDataStateMachine_GetTargetDataSlotId_004, Function | 
 HWTEST_F(BranchTest, IncallDataStateMachine_GetTargetDataSlotId_005, Function | MediumTest | Level3)
 {
     system::SetParameter(PERSIST_TSTS_MODE, "1");
-    auto handler = std::make_shared<StateMachineTest>();
-    auto stateMachine = std::make_shared<IncallDataStateMachine>();
+    auto handler = TestAsyncUtils::MakeDrainedTelEventHandler<StateMachineTest>();
+    auto stateMachine = TestAsyncUtils::MakeDrainedStateMachine<IncallDataStateMachine>();
     sptr<ApnManager> apnManager = nullptr;
     stateMachine->Init(0, CELLDATA_SLOT_ID_3, handler, apnManager);
     int32_t targetSlotId = stateMachine->GetTargetDataSlotId(CELLDATA_SLOT_ID_1);
@@ -2936,8 +2972,8 @@ HWTEST_F(BranchTest, IncallDataStateMachine_GetTargetDataSlotId_005, Function | 
 HWTEST_F(BranchTest, IncallDataStateMachine_SetPrimarySlot_001, Function | MediumTest | Level3)
 {
     system::SetParameter(PERSIST_TSTS_MODE, "1");
-    auto handler = std::make_shared<StateMachineTest>();
-    auto stateMachine = std::make_shared<IncallDataStateMachine>();
+    auto handler = TestAsyncUtils::MakeDrainedTelEventHandler<StateMachineTest>();
+    auto stateMachine = TestAsyncUtils::MakeDrainedStateMachine<IncallDataStateMachine>();
     sptr<ApnManager> apnManager = nullptr;
     stateMachine->Init(0, CELLDATA_SLOT_ID_3, handler, apnManager);
     int32_t targetSlotId = stateMachine->GetTargetDataSlotId(CELLDATA_SLOT_ID_0);
@@ -2948,8 +2984,8 @@ HWTEST_F(BranchTest, IncallDataStateMachine_SetPrimarySlot_001, Function | Mediu
 HWTEST_F(BranchTest, IncallDataStateMachine_SetPrimarySlot_002, Function | MediumTest | Level3)
 {
     system::SetParameter(PERSIST_TSTS_MODE, "0");
-    auto handler = std::make_shared<StateMachineTest>();
-    auto stateMachine = std::make_shared<IncallDataStateMachine>();
+    auto handler = TestAsyncUtils::MakeDrainedTelEventHandler<StateMachineTest>();
+    auto stateMachine = TestAsyncUtils::MakeDrainedStateMachine<IncallDataStateMachine>();
     sptr<ApnManager> apnManager = nullptr;
     stateMachine->Init(0, CELLDATA_SLOT_ID_0, handler, apnManager);
     stateMachine->SetPrimarySlot(CELLDATA_SLOT_ID_1);
@@ -3001,7 +3037,7 @@ HWTEST_F(BranchTest, CellularDataUtils_IsTstsModeEnabled_007, Function | MediumT
 HWTEST_F(BranchTest, CheckDataPermittedByDsds_TSTS_001, Function | MediumTest | Level3)
 {
     system::SetParameter(PERSIST_TSTS_MODE, "0");
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(CELLDATA_SLOT_ID_3);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(CELLDATA_SLOT_ID_3);
     cellularDataHandler->Init();
     bool result = cellularDataHandler->CheckDataPermittedByDsds();
     ASSERT_FALSE(result);
@@ -3010,7 +3046,7 @@ HWTEST_F(BranchTest, CheckDataPermittedByDsds_TSTS_001, Function | MediumTest | 
 HWTEST_F(BranchTest, CheckDataPermittedByDsds_TSTS_002, Function | MediumTest | Level3)
 {
     system::SetParameter(PERSIST_TSTS_MODE, "1");
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(CELLDATA_SLOT_ID_0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(CELLDATA_SLOT_ID_0);
     cellularDataHandler->Init();
     bool result = cellularDataHandler->CheckDataPermittedByDsds();
     ASSERT_FALSE(result);
@@ -3019,7 +3055,7 @@ HWTEST_F(BranchTest, CheckDataPermittedByDsds_TSTS_002, Function | MediumTest | 
 HWTEST_F(BranchTest, HandleDsdsModeChanged_TSTS_001, Function | MediumTest | Level3)
 {
     system::SetParameter(PERSIST_TSTS_MODE, "0");
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(CELLDATA_SLOT_ID_0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(CELLDATA_SLOT_ID_0);
     cellularDataHandler->Init();
     auto int32Parcel = std::make_shared<Int32Parcel>();
     int32Parcel->data = DSDS_MODE_V2;
@@ -3031,7 +3067,7 @@ HWTEST_F(BranchTest, HandleDsdsModeChanged_TSTS_001, Function | MediumTest | Lev
 HWTEST_F(BranchTest, HandleDsdsModeChanged_TSTS_002, Function | MediumTest | Level3)
 {
     system::SetParameter(PERSIST_TSTS_MODE, "1");
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(CELLDATA_SLOT_ID_0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(CELLDATA_SLOT_ID_0);
     cellularDataHandler->Init();
     auto int32Parcel = std::make_shared<Int32Parcel>();
     int32Parcel->data = DSDS_MODE_V3;
@@ -3043,7 +3079,7 @@ HWTEST_F(BranchTest, HandleDsdsModeChanged_TSTS_002, Function | MediumTest | Lev
 HWTEST_F(BranchTest, HandleDsdsModeChanged_TSTS_003, Function | MediumTest | Level3)
 {
     system::SetParameter(PERSIST_TSTS_MODE, "1");
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(CELLDATA_SLOT_ID_3);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(CELLDATA_SLOT_ID_3);
     cellularDataHandler->Init();
     auto int32Parcel = std::make_shared<Int32Parcel>();
     int32Parcel->data = DSDS_MODE_V2;
@@ -3055,7 +3091,7 @@ HWTEST_F(BranchTest, HandleDsdsModeChanged_TSTS_003, Function | MediumTest | Lev
 HWTEST_F(BranchTest, HandleDsdsModeChanged_TSTS_004, Function | MediumTest | Level3)
 {
     system::SetParameter(PERSIST_TSTS_MODE, "1");
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(CELLDATA_SLOT_ID_1);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(CELLDATA_SLOT_ID_1);
     cellularDataHandler->Init();
     auto int32Parcel = std::make_shared<Int32Parcel>();
     int32Parcel->data = DSDS_MODE_V2;
@@ -3067,7 +3103,7 @@ HWTEST_F(BranchTest, HandleDsdsModeChanged_TSTS_004, Function | MediumTest | Lev
 HWTEST_F(BranchTest, HandleDsdsModeChanged_TSTS_005, Function | MediumTest | Level3)
 {
     system::SetParameter(PERSIST_TSTS_MODE, "1");
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(CELLDATA_SLOT_ID_0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(CELLDATA_SLOT_ID_0);
     cellularDataHandler->Init();
     auto int32Parcel = std::make_shared<Int32Parcel>();
     int32Parcel->data = 1;
@@ -3079,7 +3115,7 @@ HWTEST_F(BranchTest, HandleDsdsModeChanged_TSTS_005, Function | MediumTest | Lev
 HWTEST_F(BranchTest, SetDataPermittedForMms_TSTS_001, Function | MediumTest | Level3)
 {
     system::SetParameter(PERSIST_TSTS_MODE, "0");
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(CELLDATA_SLOT_ID_3);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(CELLDATA_SLOT_ID_3);
     EXPECT_NE(cellularDataHandler, nullptr);
     cellularDataHandler->Init();
     cellularDataHandler->SetDataPermittedForMms(true);
@@ -3088,7 +3124,7 @@ HWTEST_F(BranchTest, SetDataPermittedForMms_TSTS_001, Function | MediumTest | Le
 HWTEST_F(BranchTest, SetDataPermittedForMms_TSTS_002, Function | MediumTest | Level3)
 {
     system::SetParameter(PERSIST_TSTS_MODE, "1");
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(CELLDATA_SLOT_ID_3);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(CELLDATA_SLOT_ID_3);
     cellularDataHandler->Init();
     bool result = cellularDataHandler->SetDataPermittedForMms(true);
     ASSERT_TRUE(result);
@@ -3098,7 +3134,7 @@ HWTEST_F(BranchTest, SetDataPermittedForMms_TSTS_002, Function | MediumTest | Le
 HWTEST_F(BranchTest, HandleDefaultDataSubscriptionChanged_TSTS_001, Function | MediumTest | Level3)
 {
     system::SetParameter(PERSIST_TSTS_MODE, "0");
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(CELLDATA_SLOT_ID_3);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(CELLDATA_SLOT_ID_3);
     cellularDataHandler->Init();
     cellularDataHandler->HandleDefaultDataSubscriptionChanged();
     EXPECT_EQ(cellularDataHandler->slotId_, CELLDATA_SLOT_ID_3);
@@ -3107,7 +3143,7 @@ HWTEST_F(BranchTest, HandleDefaultDataSubscriptionChanged_TSTS_001, Function | M
 HWTEST_F(BranchTest, HandleDefaultDataSubscriptionChanged_TSTS_002, Function | MediumTest | Level3)
 {
     system::SetParameter(PERSIST_TSTS_MODE, "1");
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(CELLDATA_SLOT_ID_3);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(CELLDATA_SLOT_ID_3);
     cellularDataHandler->Init();
     cellularDataHandler->HandleDefaultDataSubscriptionChanged();
     EXPECT_EQ(cellularDataHandler->slotId_, CELLDATA_SLOT_ID_3);
@@ -3116,7 +3152,7 @@ HWTEST_F(BranchTest, HandleDefaultDataSubscriptionChanged_TSTS_002, Function | M
 HWTEST_F(BranchTest, HandleDefaultDataSubscriptionChanged_TSTS_003, Function | MediumTest | Level3)
 {
     system::SetParameter(PERSIST_TSTS_MODE, "1");
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(CELLDATA_SLOT_ID_0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(CELLDATA_SLOT_ID_0);
     cellularDataHandler->Init();
     cellularDataHandler->HandleDefaultDataSubscriptionChanged();
     EXPECT_EQ(cellularDataHandler->slotId_, CELLDATA_SLOT_ID_0);
@@ -3139,7 +3175,7 @@ bool MockIsVSimInDisableProcessTrue()
 
 HWTEST_F(BranchTest, CheckDataPermittedByDsds_VSim_001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(CELLULAR_DATA_VSIM_SLOT_ID);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(CELLULAR_DATA_VSIM_SLOT_ID);
     cellularDataHandler->Init();
 #ifdef OHOS_BUILD_ENABLE_TELEPHONY_EXT
     auto originalEnabled = TELEPHONY_EXT_WRAPPER.isVSimEnabled_;
@@ -3155,7 +3191,7 @@ HWTEST_F(BranchTest, CheckDataPermittedByDsds_VSim_001, Function | MediumTest | 
 
 HWTEST_F(BranchTest, CheckDataPermittedByDsds_VSim_002, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(CELLDATA_SLOT_ID_0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(CELLDATA_SLOT_ID_0);
     cellularDataHandler->Init();
 #ifdef OHOS_BUILD_ENABLE_TELEPHONY_EXT
     auto originalEnabled = TELEPHONY_EXT_WRAPPER.isVSimEnabled_;
@@ -3171,7 +3207,7 @@ HWTEST_F(BranchTest, CheckDataPermittedByDsds_VSim_002, Function | MediumTest | 
 
 HWTEST_F(BranchTest, CheckDataPermittedByDsds_VSim_003, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(CELLDATA_SLOT_ID_0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(CELLDATA_SLOT_ID_0);
     cellularDataHandler->Init();
 #ifdef OHOS_BUILD_ENABLE_TELEPHONY_EXT
     auto originalEnabled = TELEPHONY_EXT_WRAPPER.isVSimEnabled_;
@@ -3187,7 +3223,7 @@ HWTEST_F(BranchTest, CheckDataPermittedByDsds_VSim_003, Function | MediumTest | 
 
 HWTEST_F(BranchTest, CheckDataPermittedByDsds_VSim_004, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(CELLULAR_DATA_VSIM_SLOT_ID);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(CELLULAR_DATA_VSIM_SLOT_ID);
     cellularDataHandler->Init();
 #ifdef OHOS_BUILD_ENABLE_TELEPHONY_EXT
     auto originalEnabled = TELEPHONY_EXT_WRAPPER.isVSimEnabled_;
@@ -3203,7 +3239,7 @@ HWTEST_F(BranchTest, CheckDataPermittedByDsds_VSim_004, Function | MediumTest | 
 
 HWTEST_F(BranchTest, SetDataPermittedForMms_VSim_001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(CELLDATA_SLOT_ID_0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(CELLDATA_SLOT_ID_0);
     cellularDataHandler->Init();
 #ifdef OHOS_BUILD_ENABLE_TELEPHONY_EXT
     auto originalEnabled = TELEPHONY_EXT_WRAPPER.isVSimEnabled_;
@@ -3226,7 +3262,7 @@ bool MockIsVirtualModemSlot(int32_t slotId)
 
 HWTEST_F(BranchTest, HandleDefaultDataSubscriptionChanged_Distributed_001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(100);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(100);
     cellularDataHandler->Init();
 #ifdef OHOS_BUILD_ENABLE_TELEPHONY_EXT
     auto isVirtualModemSlotFun = TELEPHONY_EXT_WRAPPER.isVirtualModemSlot_;

@@ -27,8 +27,10 @@
 #include "traffic_management.h"
 #include "apn_attribute.h"
 #include "mock/mock_network_search.h"
+#include "mock/mock_telephony_permission.h"
 #include "telephony_permission.h"
 #include "telephony_ext_wrapper.h"
+#include "utils/test_async_utils.h"
 
 namespace OHOS {
 namespace Telephony {
@@ -56,12 +58,35 @@ void CellularDataServiceTest::SetUpTestCase() {}
 
 void CellularDataServiceTest::TearDownTestCase()
 {
+    /*
+     * 停止服务持有的各 slot 控制器/Handler 的 FFRT 队列（控制器队列上可能有
+     * MSG_ASYNCHRONOUS_REGISTER 延迟事件的重投递），排空后再等待，
+     * 规避进程退出时 TelEventQueue/FFRT 析构竞态导致的 Signal 6。
+     */
+    auto service = DelayedSingleton<CellularDataService>::GetInstance();
+    if (service != nullptr) {
+        for (const std::pair<const int32_t, std::shared_ptr<CellularDataController>> &it :
+            service->cellularDataControllers_) {
+            if (it.second == nullptr) {
+                continue;
+            }
+            if (it.second->cellularDataHandler_ != nullptr) {
+                TestAsyncUtils::DrainCellularDataHandler(it.second->cellularDataHandler_.get());
+            }
+            TestAsyncUtils::DrainTelEventHandler(it.second.get());
+        }
+    }
     sleep(SLEEP_TIME);
 }
 
 void CellularDataServiceTest::SetUp() {}
 
-void CellularDataServiceTest::TearDown() {}
+void CellularDataServiceTest::TearDown()
+{
+    // 释放权限打桩单例，防止用例内的 ON_CALL 配置残留影响后续用例（见 test/mock/
+    // mock_telephony_permission.h；未配置期望时默认拒绝，与本机真实行为一致）。
+    MockTelephonyPermission::ReleaseMockTelephonyPermission();
+}
 
 /**
  * @tc.number   CellularDataService_001
@@ -70,6 +95,15 @@ void CellularDataServiceTest::TearDown() {}
  */
 HWTEST_F(CellularDataServiceTest, CellularDataService_001, TestSize.Level1)
 {
+    // 权限打桩（外科式）：仅放行 GetApnState/HandleApnChanged 等值断言所需的
+    // GET_TELEPHONY_STATE 与 SET_TELEPHONY_STATE；GET_NETWORK_INFO 与 systemApp 检查
+    // 保持默认拒绝，使 IsCellularDataEnabled/GetCellularDataState/EnableCellularData 等
+    // NE 断言维持权限失败分支（对齐作者 DataAccessToken 的预期判定环境）。
+    auto permissionMock = MockTelephonyPermission::GetOrCreateMockTelephonyPermission();
+    ON_CALL(*permissionMock, CheckPermission(Eq(std::string(Permission::GET_TELEPHONY_STATE))))
+        .WillByDefault(testing::Return(true));
+    ON_CALL(*permissionMock, CheckPermission(Eq(std::string(Permission::SET_TELEPHONY_STATE))))
+        .WillByDefault(testing::Return(true));
     DataAccessToken token;
     service->OnStart();
     service->isInitSuccess_ = true;
@@ -287,9 +321,21 @@ HWTEST_F(CellularDataServiceTest, DataConnectionMonitor_UpdateNetTrafficState_00
 HWTEST_F(CellularDataServiceTest, DataConnectionMonitor_UpdateDataFlowType_001, TestSize.Level0)
 {
     std::shared_ptr<DataConnectionMonitor> dataConnectionMonitor = std::make_shared<DataConnectionMonitor>(0);
+    // UpdatePacketData 依赖 netmanager 真实查询蜂窝 iface（GetIfaceName 走 GetNetIdByIdentifier/
+    // GetAllNets/GetConnectionProperties 真实 IPC）；无数据连接的环境 iface 为空会直接早退并
+    // 保持 DOWN。先探测环境可用性，无蜂窝 iface 时跳过（环境自适应约定，同 rdb 用例）。
+    if (!dataConnectionMonitor->trafficManager_->UpdatePacketData()) {
+        GTEST_SKIP() << "no cellular iface on this device (netmanager query failed), skip";
+    }
+    // 有 iface 时取探测到的真实收发包计数作为 previous，使 delta=(0,0) 确定性落在 NONE
+    // 分支（原用例硬编码 previous=200/100，仅在 iface 存在且空闲的 CI 环境经 counter-reset
+    // 路径偶然成立）。
+    int64_t sendPackets = 0;
+    int64_t recvPackets = 0;
+    dataConnectionMonitor->trafficManager_->GetPacketData(sendPackets, recvPackets);
+    dataConnectionMonitor->trafficManager_->sendPackets_ = sendPackets;
+    dataConnectionMonitor->trafficManager_->recvPackets_ = recvPackets;
     dataConnectionMonitor->dataFlowType_ = CellDataFlowType::DATA_FLOW_TYPE_DOWN;
-    dataConnectionMonitor->trafficManager_->sendPackets_ = 200;
-    dataConnectionMonitor->trafficManager_->recvPackets_ = 100;
     dataConnectionMonitor->UpdateDataFlowType();
     ASSERT_EQ(static_cast<int32_t>(dataConnectionMonitor->dataFlowType_),
         static_cast<int32_t>(CellDataFlowType::DATA_FLOW_TYPE_NONE));

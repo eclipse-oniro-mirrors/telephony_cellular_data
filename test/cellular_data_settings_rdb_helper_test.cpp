@@ -100,6 +100,9 @@ HWTEST_F(CellularDataSettingsRdbHelperTest, CellularDataSettingsRdbHelper_GetVal
 HWTEST_F(CellularDataSettingsRdbHelperTest, CellularDataSettingsRdbHelper_GetValueString_002,
     Function | MediumTest | Level3)
 {
+    if (!WriteBackupSimList(BACKUP_SIM_LIST_VALUE_VALID)) {
+        GTEST_SKIP() << "datashare unavailable, skip non-existent column get value case";
+    }
     auto settingHelper = CellularDataSettingsRdbHelper::GetInstance();
     ASSERT_NE(settingHelper, nullptr);
     Uri backupSimListUri(CELLULAR_DATA_SETTING_BACKUP_SIM_LIST_URI);
@@ -114,6 +117,9 @@ HWTEST_F(CellularDataSettingsRdbHelperTest, CellularDataSettingsRdbHelper_GetVal
  */
 HWTEST_F(CellularDataSettingsRdbHelperTest, CellularDataSettingsRdbHelper_PutValue_001, Function | MediumTest | Level3)
 {
+    if (!WriteBackupSimList(BACKUP_SIM_LIST_VALUE_VALID)) {
+        GTEST_SKIP() << "datashare unavailable, skip intelligence network put value case";
+    }
     auto settingHelper = CellularDataSettingsRdbHelper::GetInstance();
     ASSERT_NE(settingHelper, nullptr);
     Uri intelligenceNetworkUri(CELLULAR_DATA_SETTING_INTELLIGENCE_NETWORK_URI);

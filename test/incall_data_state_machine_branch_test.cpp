@@ -33,6 +33,7 @@
 #include "radio_event.h"
 #include "sim_state_type.h"
 #include "telephony_types.h"
+#include "utils/test_async_utils.h"
 #include "uri.h"
 
 namespace OHOS {
@@ -65,11 +66,26 @@ public:
     {
         InitMockManager();
         CreateIncallDataStateMachine();
+        // Init() 末尾 StateMachine::Start() 异步投递 MSG_STATE_MACHINE_INIT，FFRT 线程延迟
+        // 处理时会在用例中途执行 InitCmdEnter/StateBegin（额外消费 SimManager mock 的
+        // GetDefaultCellularDataSlotId/GetPrimarySlotId 并重置 destState_，DT 实测
+        // SecondaryActiveState_ProcessCallEnded_001 因过饱和失败）。本文件 11 个用例均直接
+        // 驱动状态方法、不依赖状态机事件循环，SetUp 统一清空待处理事件消除该竞态。
+        TestAsyncUtils::DrainTelEventHandler(stateMachine_->stateMachineEventHandler_.get());
     }
     void TearDown()
     {
         UnmockManager();
         system::SetParameter(PERSIST_TSTS_MODE, "0");
+        // 用例结束先停机排空 FFRT 队列再析构成员，规避 TelEventQueue 生命周期竞态（DT Signal 6）
+        if (stateMachine_ != nullptr) {
+            TestAsyncUtils::DrainStateMachine(stateMachine_.get());
+            stateMachine_ = nullptr;
+        }
+        if (handler_ != nullptr) {
+            TestAsyncUtils::DrainTelEventHandler(handler_.get());
+            handler_ = nullptr;
+        }
     }
 
     void InitMockManager()

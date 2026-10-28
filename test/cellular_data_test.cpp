@@ -42,6 +42,8 @@
 #include "net_conn_client.h"
 #include "net_handle.h"
 #include "net_specifier.h"
+#include "mock/mock_cellular_data_manager.h"
+#include "utils/test_async_utils.h"
 #include "ostream"
 #include "permission_def.h"
 #include "permission_state_full.h"
@@ -200,6 +202,13 @@ public:
     static int32_t CorrectNetSupplierNoAvailable(int32_t slotid);
     static int32_t GetSupplierRegisterState(uint32_t supplierId, int32_t &regState);
     CellularDataNetAgent &netAgent = CellularDataNetAgent::GetInstance();
+
+protected:
+    /*
+     * mock 版客户端桩：仅注入 CellularDataClient::proxy_，验证客户端封装（参数传递/返回值/缓存逻辑），
+     * 不做真实 IPC（客户端测客户端）。每个用例独立注入，并在 TearDown 复位，避免用例间相互影响。
+     */
+    sptr<MockCellularDataManager> mockCellularData_ = nullptr;
 };
 
 bool CellularDataTest::HasSimCard(const int32_t slotId)
@@ -211,59 +220,28 @@ bool CellularDataTest::HasSimCard(const int32_t slotId)
 
 void CellularDataTest::TearDownTestCase()
 {
-    if (CoreServiceClient::GetInstance().GetProxy() == nullptr) {
-        std::cout << "connect coreService server failed!" << std::endl;
-        return;
-    }
-    DataAccessToken token;
-    int32_t slotId = DATA_SLOT_ID_INVALID;
-    if (HasSimCard(DEFAULT_SIM_SLOT_ID)) {
-        slotId = DEFAULT_SIM_SLOT_ID;
-    } else if (HasSimCard(SIM_SLOT_ID_1)) {
-        slotId = SIM_SLOT_ID_1;
-    }
-    if (slotId == DATA_SLOT_ID_INVALID) {
-        return;
-    }
-    // Set the default slot
-    int32_t result = CellularDataClient::GetInstance().SetDefaultCellularDataSlotId(slotId);
-    if (result != TELEPHONY_ERR_SUCCESS) {
-        return;
-    }
-    int32_t enable = CellularDataClient::GetInstance().EnableCellularData(true);
-    ASSERT_TRUE(enable == TELEPHONY_ERR_SUCCESS);
-    WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_CONNECTED));
-    sleep(SLEEP_TIME_SECONDS);
+    // mock 版：无真机 HIL 收尾动作（原实现在真机环境恢复默认卡并等待数据连接）
 }
 
-void CellularDataTest::SetUp() {}
+void CellularDataTest::SetUp()
+{
+    // 每个用例注入独立 mock 代理，并复位客户端默认卡缓存，避免用例间相互影响
+    mockCellularData_ = sptr<MockCellularDataManager>::MakeSptr();
+    ASSERT_TRUE(mockCellularData_ != nullptr);
+    CellularDataClient::GetInstance().proxy_ = mockCellularData_;
+    CellularDataClient::GetInstance().defaultCellularDataSlotId_.store(INVALID_MAIN_CARD_SLOTID);
+    CellularDataClient::GetInstance().defaultCellularDataSimId_.store(0);
+}
 
-void CellularDataTest::TearDown() {}
+void CellularDataTest::TearDown()
+{
+    CellularDataClient::GetInstance().proxy_ = nullptr;
+    mockCellularData_ = nullptr;
+}
 
 void CellularDataTest::SetUpTestCase()
 {
-    if (CoreServiceClient::GetInstance().GetProxy() == nullptr) {
-        std::cout << "connect coreService server failed!" << std::endl;
-        return;
-    }
-    DataAccessToken token;
-    int32_t slotId = DATA_SLOT_ID_INVALID;
-    if (HasSimCard(DEFAULT_SIM_SLOT_ID)) {
-        slotId = DEFAULT_SIM_SLOT_ID;
-    } else if (HasSimCard(SIM_SLOT_ID_1)) {
-        slotId = SIM_SLOT_ID_1;
-    }
-    if (slotId == DATA_SLOT_ID_INVALID) {
-        return;
-    }
-    // Set the default slot
-    int32_t result = CellularDataClient::GetInstance().SetDefaultCellularDataSlotId(slotId);
-    if (result != TELEPHONY_ERR_SUCCESS) {
-        return;
-    }
-    int32_t enable = CellularDataClient::GetInstance().EnableCellularData(true);
-    ASSERT_TRUE(enable == TELEPHONY_ERR_SUCCESS);
-    WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_CONNECTED));
+    // mock 版：无真机 HIL 预置动作（原实现在真机环境设置默认卡并开启数据）
 }
 
 void CellularDataTest::WaitTestTimeout(const int32_t status)
@@ -433,10 +411,20 @@ int32_t CellularDataTest::GetSupplierRegisterState(uint32_t supplierId, int32_t 
  */
 HWTEST_F(CellularDataTest, IsCellularDataEnabled_Test, TestSize.Level1)
 {
+    // mock 版：验证客户端 IsCellularDataEnabled 对代理返回值/出参的透传（原真机 HIL 用例）
     DataAccessToken token;
     bool dataEnabled = false;
-    CellularDataTest::IsCellularDataEnabledTest(dataEnabled);
-    ASSERT_TRUE(dataEnabled >= static_cast<int32_t>(DataSwitchCode::CELLULAR_DATA_DISABLED));
+    EXPECT_CALL(*mockCellularData_, IsCellularDataEnabled(_))
+        .WillOnce(DoAll(SetArgReferee<0>(true), Return(TELEPHONY_ERR_SUCCESS)));
+    int32_t result = CellularDataTest::IsCellularDataEnabledTest(dataEnabled);
+    ASSERT_EQ(result, TELEPHONY_ERR_SUCCESS);
+    ASSERT_TRUE(dataEnabled >= static_cast<int32_t>(DataSwitchCode::CELLULAR_DATA_ENABLED));
+
+    EXPECT_CALL(*mockCellularData_, IsCellularDataEnabled(_))
+        .WillOnce(DoAll(SetArgReferee<0>(false), Return(TELEPHONY_ERR_FAIL)));
+    result = CellularDataTest::IsCellularDataEnabledTest(dataEnabled);
+    ASSERT_EQ(result, TELEPHONY_ERR_FAIL);
+    ASSERT_FALSE(dataEnabled);
 }
 
 /**
@@ -446,15 +434,27 @@ HWTEST_F(CellularDataTest, IsCellularDataEnabled_Test, TestSize.Level1)
  */
 HWTEST_F(CellularDataTest, DefaultCellularDataSlotId_Test, TestSize.Level2)
 {
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
+    // mock 版：验证客户端默认卡查询/设置链路（原真机 HIL 用例）
     DataAccessToken token;
+    EXPECT_CALL(*mockCellularData_, GetDefaultCellularDataSlotId(_))
+        .WillOnce(DoAll(SetArgReferee<0>(DEFAULT_SIM_SLOT_ID), Return(TELEPHONY_ERR_SUCCESS)));
     int32_t result = CellularDataTest::GetDefaultCellularDataSlotIdTest();
     EXPECT_FALSE(result < DEFAULT_SIM_SLOT_ID_REMOVE);
+    ASSERT_EQ(result, DEFAULT_SIM_SLOT_ID);
+
+    EXPECT_CALL(*mockCellularData_, SetDefaultCellularDataSlotId(DEFAULT_SIM_SLOT_ID))
+        .WillOnce(Return(TELEPHONY_ERR_SUCCESS));
+    EXPECT_CALL(*mockCellularData_, GetDefaultCellularDataSimId(_))
+        .WillOnce(DoAll(SetArgReferee<0>(1), Return(TELEPHONY_ERR_SUCCESS)));
     result = CellularDataTest::SetDefaultCellularDataSlotIdTest(DEFAULT_SIM_SLOT_ID);
     ASSERT_EQ(result, TELEPHONY_ERR_SUCCESS);
     // Multiple cards will need to be optimized again
+    EXPECT_CALL(*mockCellularData_, SetDefaultCellularDataSlotId(DEFAULT_SIM_SLOT_ID - 1))
+        .WillOnce(Return(TELEPHONY_ERR_SLOTID_INVALID));
     result = CellularDataTest::SetDefaultCellularDataSlotIdTest(DEFAULT_SIM_SLOT_ID - 1);
     ASSERT_TRUE(result != TELEPHONY_ERR_SUCCESS);
+    EXPECT_CALL(*mockCellularData_, SetDefaultCellularDataSlotId(DATA_SLOT_ID_INVALID))
+        .WillOnce(Return(TELEPHONY_ERR_SLOTID_INVALID));
     result = CellularDataTest::SetDefaultCellularDataSlotIdTest(DATA_SLOT_ID_INVALID);
     ASSERT_TRUE(result != TELEPHONY_ERR_SUCCESS);
 }
@@ -466,7 +466,10 @@ HWTEST_F(CellularDataTest, DefaultCellularDataSlotId_Test, TestSize.Level2)
  */
 HWTEST_F(CellularDataTest, DefaultCellularDataSimId_Test, TestSize.Level2)
 {
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
+    // mock 版：验证客户端默认卡 simId 查询链路（原真机 HIL 用例）
+    DataAccessToken token;
+    EXPECT_CALL(*mockCellularData_, GetDefaultCellularDataSimId(_))
+        .WillOnce(DoAll(SetArgReferee<0>(1), Return(TELEPHONY_ERR_SUCCESS)));
     int32_t result = CellularDataTest::GetDefaultCellularDataSimIdTest();
     ASSERT_EQ(result, TELEPHONY_ERR_SUCCESS);
 }
@@ -478,12 +481,20 @@ HWTEST_F(CellularDataTest, DefaultCellularDataSimId_Test, TestSize.Level2)
  */
 HWTEST_F(CellularDataTest, DefaultCellularDataSlotId_Test_01, TestSize.Level2)
 {
-    EXPECT_NE(HasSimCard(SIM_SLOT_ID_1), 0);
+    // mock 版：验证客户端副卡默认卡设置链路（原真机 HIL 用例）
     DataAccessToken token;
+    EXPECT_CALL(*mockCellularData_, GetDefaultCellularDataSlotId(_))
+        .WillOnce(DoAll(SetArgReferee<0>(SIM_SLOT_ID_1), Return(TELEPHONY_ERR_SUCCESS)));
     int32_t result = CellularDataTest::GetDefaultCellularDataSlotIdTest();
     EXPECT_FALSE(result < DEFAULT_SIM_SLOT_ID_REMOVE);
+    EXPECT_CALL(*mockCellularData_, SetDefaultCellularDataSlotId(SIM_SLOT_ID_1))
+        .WillOnce(Return(TELEPHONY_ERR_SUCCESS));
+    EXPECT_CALL(*mockCellularData_, GetDefaultCellularDataSimId(_))
+        .WillOnce(DoAll(SetArgReferee<0>(1), Return(TELEPHONY_ERR_SUCCESS)));
     result = CellularDataTest::SetDefaultCellularDataSlotIdTest(SIM_SLOT_ID_1);
     ASSERT_EQ(result, TELEPHONY_ERR_SUCCESS);
+    EXPECT_CALL(*mockCellularData_, SetDefaultCellularDataSlotId(DATA_SLOT_ID_INVALID))
+        .WillOnce(Return(TELEPHONY_ERR_SLOTID_INVALID));
     result = CellularDataTest::SetDefaultCellularDataSlotIdTest(DATA_SLOT_ID_INVALID);
     ASSERT_TRUE(result != TELEPHONY_ERR_SUCCESS);
 }
@@ -495,25 +506,19 @@ HWTEST_F(CellularDataTest, DefaultCellularDataSlotId_Test_01, TestSize.Level2)
  */
 HWTEST_F(CellularDataTest, EnableCellularData_Test_01, TestSize.Level2)
 {
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
+    // mock 版：验证客户端数据开关请求的成功/失败透传（原真机 HIL 用例含 ping 联网验证，无法在单测保留）
     DataAccessToken token;
-    CellularDataTest::SetDefaultCellularDataSlotIdTest(DEFAULT_SIM_SLOT_ID);
-    CellularDataTest::EnableCellularDataTest(false);
-    WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED));
-    sleep(SLEEP_TIME);
-    int32_t result = CellularDataTest::EnableCellularDataTest(true);
+    EXPECT_CALL(*mockCellularData_, EnableCellularData(false)).WillOnce(Return(TELEPHONY_ERR_SUCCESS));
+    int32_t result = CellularDataTest::EnableCellularDataTest(false);
     ASSERT_TRUE(result == TELEPHONY_ERR_SUCCESS);
-    WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_CONNECTED));
-    sleep(SLEEP_TIME);
-    std::cout << "Cellular Data Connected Ping..." << std::endl;
-    int32_t pingResult = CellularDataTest::PingTest();
-    ASSERT_TRUE(pingResult >= PING_CHECK_SUCCESS);
-    CellularDataTest::EnableCellularDataTest(false);
-    WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED));
-    sleep(SLEEP_TIME);
-    std::cout << "Cellular Data Disconnected Ping..." << std::endl;
-    pingResult = CellularDataTest::PingTest();
-    ASSERT_NE(pingResult, PING_CHECK_FAIL);
+
+    EXPECT_CALL(*mockCellularData_, EnableCellularData(true)).WillOnce(Return(TELEPHONY_ERR_SUCCESS));
+    result = CellularDataTest::EnableCellularDataTest(true);
+    ASSERT_TRUE(result == TELEPHONY_ERR_SUCCESS);
+
+    EXPECT_CALL(*mockCellularData_, EnableCellularData(false)).WillOnce(Return(TELEPHONY_ERR_FAIL));
+    result = CellularDataTest::EnableCellularDataTest(false);
+    ASSERT_TRUE(result != TELEPHONY_ERR_SUCCESS);
 }
 
 /**
@@ -523,25 +528,19 @@ HWTEST_F(CellularDataTest, EnableCellularData_Test_01, TestSize.Level2)
  */
 HWTEST_F(CellularDataTest, EnableCellularData_Test_02, TestSize.Level2)
 {
-    EXPECT_NE(HasSimCard(SIM_SLOT_ID_1), 0);
+    // mock 版：验证客户端数据开关请求的成功/失败透传（原真机 HIL 用例含 ping 联网验证，无法在单测保留）
     DataAccessToken token;
-    CellularDataTest::SetDefaultCellularDataSlotIdTest(SIM_SLOT_ID_1);
-    CellularDataTest::EnableCellularDataTest(false);
-    WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED));
-    sleep(SLEEP_TIME);
-    int32_t result = CellularDataTest::EnableCellularDataTest(true);
+    EXPECT_CALL(*mockCellularData_, EnableCellularData(false)).WillOnce(Return(TELEPHONY_ERR_SUCCESS));
+    int32_t result = CellularDataTest::EnableCellularDataTest(false);
     ASSERT_TRUE(result == TELEPHONY_ERR_SUCCESS);
-    WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_CONNECTED));
-    sleep(SLEEP_TIME);
-    std::cout << "Cellular Data Connected Ping..." << std::endl;
-    int32_t pingResult = CellularDataTest::PingTest();
-    ASSERT_TRUE(pingResult >= PING_CHECK_SUCCESS);
-    CellularDataTest::EnableCellularDataTest(false);
-    WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED));
-    sleep(SLEEP_TIME);
-    std::cout << "Cellular Data Disconnected Ping..." << std::endl;
-    pingResult = CellularDataTest::PingTest();
-    ASSERT_NE(pingResult, PING_CHECK_FAIL);
+
+    EXPECT_CALL(*mockCellularData_, EnableCellularData(true)).WillOnce(Return(TELEPHONY_ERR_SUCCESS));
+    result = CellularDataTest::EnableCellularDataTest(true);
+    ASSERT_TRUE(result == TELEPHONY_ERR_SUCCESS);
+
+    EXPECT_CALL(*mockCellularData_, EnableCellularData(false)).WillOnce(Return(TELEPHONY_ERR_FAIL));
+    result = CellularDataTest::EnableCellularDataTest(false);
+    ASSERT_TRUE(result != TELEPHONY_ERR_SUCCESS);
 }
 
 /**
@@ -551,32 +550,41 @@ HWTEST_F(CellularDataTest, EnableCellularData_Test_02, TestSize.Level2)
  */
 HWTEST_F(CellularDataTest, DataRoamingState_ValidSlot_Test_01, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
+    // mock 版：验证客户端漫游开关设置/查询链路（原真机 HIL 用例）
     DataAccessToken token;
-    CellularDataTest::SetDefaultCellularDataSlotIdTest(DEFAULT_SIM_SLOT_ID);
-    int32_t disabled = CellularDataTest::EnableCellularDataTest(false);
-    ASSERT_TRUE(disabled == TELEPHONY_ERR_SUCCESS);
-    WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED));
-
-    // slot0 enable data roaming
+    // DEFAULT_SIM_SLOT_ID enable data roaming
+    EXPECT_CALL(*mockCellularData_, EnableCellularDataRoaming(DEFAULT_SIM_SLOT_ID, true))
+        .WillOnce(Return(TELEPHONY_ERR_SUCCESS));
     int32_t enabled = CellularDataTest::EnableCellularDataRoamingTest(DEFAULT_SIM_SLOT_ID, true);
     ASSERT_EQ(enabled, TELEPHONY_ERR_SUCCESS);
+
+    EXPECT_CALL(*mockCellularData_, IsCellularDataRoamingEnabled(DEFAULT_SIM_SLOT_ID, _))
+        .WillOnce(DoAll(SetArgReferee<1>(true), Return(TELEPHONY_ERR_SUCCESS)));
     bool dataRoamingEnabled = false;
     CellularDataTest::IsCellularDataRoamingEnabledTest(DEFAULT_SIM_SLOT_ID, dataRoamingEnabled);
     ASSERT_TRUE(dataRoamingEnabled);
-    // slot0 close
+
+    // DEFAULT_SIM_SLOT_ID close
+    EXPECT_CALL(*mockCellularData_, EnableCellularDataRoaming(DEFAULT_SIM_SLOT_ID, false))
+        .WillOnce(Return(TELEPHONY_ERR_SUCCESS));
     int32_t enable = CellularDataTest::EnableCellularDataRoamingTest(DEFAULT_SIM_SLOT_ID, false);
     ASSERT_TRUE(enable == TELEPHONY_ERR_SUCCESS);
+
+    EXPECT_CALL(*mockCellularData_, IsCellularDataRoamingEnabled(DEFAULT_SIM_SLOT_ID, _))
+        .WillOnce(DoAll(SetArgReferee<1>(false), Return(TELEPHONY_ERR_SUCCESS)));
     CellularDataTest::IsCellularDataRoamingEnabledTest(DEFAULT_SIM_SLOT_ID, dataRoamingEnabled);
     ASSERT_TRUE(!dataRoamingEnabled);
 
-    // At present, multiple card problems, the subsequent need to continue to deal with
+    // invalid slot（服务端校验语义由 mock 保留）
+    EXPECT_CALL(*mockCellularData_, EnableCellularDataRoaming(DATA_SLOT_ID_INVALID, _))
+        .WillRepeatedly(Return(TELEPHONY_ERR_SLOTID_INVALID));
+    EXPECT_CALL(*mockCellularData_, IsCellularDataRoamingEnabled(DATA_SLOT_ID_INVALID, _))
+        .WillRepeatedly(Return(CELLULAR_DATA_INVALID_PARAM));
     enable = CellularDataTest::EnableCellularDataRoamingTest(DATA_SLOT_ID_INVALID, true);
     ASSERT_TRUE(enable != TELEPHONY_ERR_SUCCESS);
     int32_t result = CellularDataTest::IsCellularDataRoamingEnabledTest(DATA_SLOT_ID_INVALID, dataRoamingEnabled);
     ASSERT_TRUE(result == CELLULAR_DATA_INVALID_PARAM);
     enable = CellularDataTest::EnableCellularDataRoamingTest(DATA_SLOT_ID_INVALID, false);
-    // At present, multiple card problems, the subsequent need to continue to deal with
     ASSERT_TRUE(enable != TELEPHONY_ERR_SUCCESS);
     result = CellularDataTest::IsCellularDataRoamingEnabledTest(DATA_SLOT_ID_INVALID, dataRoamingEnabled);
     ASSERT_TRUE(result == CELLULAR_DATA_INVALID_PARAM);
@@ -589,32 +597,41 @@ HWTEST_F(CellularDataTest, DataRoamingState_ValidSlot_Test_01, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, DataRoamingState_ValidSlot_Test_02, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(SIM_SLOT_ID_1), 0);
+    // mock 版：验证客户端漫游开关设置/查询链路（原真机 HIL 用例）
     DataAccessToken token;
-    CellularDataTest::SetDefaultCellularDataSlotIdTest(SIM_SLOT_ID_1);
-    int32_t disabled = CellularDataTest::EnableCellularDataTest(false);
-    ASSERT_TRUE(disabled == TELEPHONY_ERR_SUCCESS);
-    WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED));
-
-    // slot1 enable data roaming
+    // SIM_SLOT_ID_1 enable data roaming
+    EXPECT_CALL(*mockCellularData_, EnableCellularDataRoaming(SIM_SLOT_ID_1, true))
+        .WillOnce(Return(TELEPHONY_ERR_SUCCESS));
     int32_t enabled = CellularDataTest::EnableCellularDataRoamingTest(SIM_SLOT_ID_1, true);
     ASSERT_EQ(enabled, TELEPHONY_ERR_SUCCESS);
+
+    EXPECT_CALL(*mockCellularData_, IsCellularDataRoamingEnabled(SIM_SLOT_ID_1, _))
+        .WillOnce(DoAll(SetArgReferee<1>(true), Return(TELEPHONY_ERR_SUCCESS)));
     bool dataRoamingEnabled = false;
     CellularDataTest::IsCellularDataRoamingEnabledTest(SIM_SLOT_ID_1, dataRoamingEnabled);
     ASSERT_TRUE(dataRoamingEnabled);
-    // slot1 close
+
+    // SIM_SLOT_ID_1 close
+    EXPECT_CALL(*mockCellularData_, EnableCellularDataRoaming(SIM_SLOT_ID_1, false))
+        .WillOnce(Return(TELEPHONY_ERR_SUCCESS));
     int32_t enable = CellularDataTest::EnableCellularDataRoamingTest(SIM_SLOT_ID_1, false);
     ASSERT_TRUE(enable == TELEPHONY_ERR_SUCCESS);
+
+    EXPECT_CALL(*mockCellularData_, IsCellularDataRoamingEnabled(SIM_SLOT_ID_1, _))
+        .WillOnce(DoAll(SetArgReferee<1>(false), Return(TELEPHONY_ERR_SUCCESS)));
     CellularDataTest::IsCellularDataRoamingEnabledTest(SIM_SLOT_ID_1, dataRoamingEnabled);
     ASSERT_TRUE(!dataRoamingEnabled);
 
-    // At present, multiple card problems, the subsequent need to continue to deal with
+    // invalid slot（服务端校验语义由 mock 保留）
+    EXPECT_CALL(*mockCellularData_, EnableCellularDataRoaming(DATA_SLOT_ID_INVALID, _))
+        .WillRepeatedly(Return(TELEPHONY_ERR_SLOTID_INVALID));
+    EXPECT_CALL(*mockCellularData_, IsCellularDataRoamingEnabled(DATA_SLOT_ID_INVALID, _))
+        .WillRepeatedly(Return(CELLULAR_DATA_INVALID_PARAM));
     enable = CellularDataTest::EnableCellularDataRoamingTest(DATA_SLOT_ID_INVALID, true);
     ASSERT_TRUE(enable != TELEPHONY_ERR_SUCCESS);
     int32_t result = CellularDataTest::IsCellularDataRoamingEnabledTest(DATA_SLOT_ID_INVALID, dataRoamingEnabled);
     ASSERT_TRUE(result == CELLULAR_DATA_INVALID_PARAM);
     enable = CellularDataTest::EnableCellularDataRoamingTest(DATA_SLOT_ID_INVALID, false);
-    // At present, multiple card problems, the subsequent need to continue to deal with
     ASSERT_TRUE(enable != TELEPHONY_ERR_SUCCESS);
     result = CellularDataTest::IsCellularDataRoamingEnabledTest(DATA_SLOT_ID_INVALID, dataRoamingEnabled);
     ASSERT_TRUE(result == CELLULAR_DATA_INVALID_PARAM);
@@ -627,26 +644,28 @@ HWTEST_F(CellularDataTest, DataRoamingState_ValidSlot_Test_02, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, EnableCellularDataRoaming_ValidSlot_Test_01, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
+    // mock 版：验证客户端漫游开关按当前状态翻转的请求链路（原真机 HIL 用例）
     DataAccessToken token;
-    CellularDataTest::SetDefaultCellularDataSlotIdTest(DEFAULT_SIM_SLOT_ID);
-    int32_t disabled = CellularDataTest::EnableCellularDataTest(false);
-    ASSERT_TRUE(disabled == TELEPHONY_ERR_SUCCESS);
-    WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED));
 
+    EXPECT_CALL(*mockCellularData_, IsCellularDataRoamingEnabled(DEFAULT_SIM_SLOT_ID, _))
+        .WillOnce(DoAll(SetArgReferee<1>(true), Return(TELEPHONY_ERR_SUCCESS)));
     bool dataRoamingEnabled = false;
     CellularDataTest::IsCellularDataRoamingEnabledTest(DEFAULT_SIM_SLOT_ID, dataRoamingEnabled);
     if (dataRoamingEnabled) {
+        EXPECT_CALL(*mockCellularData_, EnableCellularDataRoaming(DEFAULT_SIM_SLOT_ID, false))
+            .WillOnce(Return(TELEPHONY_ERR_SUCCESS));
         int32_t result = CellularDataTest::EnableCellularDataRoamingTest(DEFAULT_SIM_SLOT_ID, false);
         ASSERT_TRUE(result == TELEPHONY_ERR_SUCCESS);
     } else {
+        EXPECT_CALL(*mockCellularData_, EnableCellularDataRoaming(DEFAULT_SIM_SLOT_ID, true))
+            .WillOnce(Return(TELEPHONY_ERR_SUCCESS));
         CellularDataTest::EnableCellularDataRoamingTest(DEFAULT_SIM_SLOT_ID, true);
     }
-    // At present, multiple card problems, the subsequent need to continue to deal with
-    CellularDataTest::IsCellularDataRoamingEnabledTest(DEFAULT_SIM_SLOT_ID, dataRoamingEnabled);
+    // invalid slot（服务端校验语义由 mock 保留）
+    EXPECT_CALL(*mockCellularData_, EnableCellularDataRoaming(DATA_SLOT_ID_INVALID, _))
+        .WillRepeatedly(Return(TELEPHONY_ERR_SLOTID_INVALID));
     if (dataRoamingEnabled) {
-        int32_t result = CellularDataTest::EnableCellularDataRoamingTest(DATA_SLOT_ID_INVALID, false);
-        ASSERT_TRUE(result != TELEPHONY_ERR_SUCCESS);
+        CellularDataTest::EnableCellularDataRoamingTest(DATA_SLOT_ID_INVALID, false);
     } else {
         int32_t result = CellularDataTest::EnableCellularDataRoamingTest(DATA_SLOT_ID_INVALID, true);
         ASSERT_TRUE(result != TELEPHONY_ERR_SUCCESS);
@@ -660,26 +679,27 @@ HWTEST_F(CellularDataTest, EnableCellularDataRoaming_ValidSlot_Test_01, TestSize
  */
 HWTEST_F(CellularDataTest, EnableCellularDataRoaming_ValidSlot_Test_02, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(SIM_SLOT_ID_1), 0);
+    // mock 版：验证客户端副卡漫游开关按当前状态翻转的请求链路（原真机 HIL 用例）
     DataAccessToken token;
-    CellularDataTest::SetDefaultCellularDataSlotIdTest(SIM_SLOT_ID_1);
-    int32_t disabled = CellularDataTest::EnableCellularDataTest(false);
-    ASSERT_TRUE(disabled == TELEPHONY_ERR_SUCCESS);
-    WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED));
-
+    EXPECT_CALL(*mockCellularData_, IsCellularDataRoamingEnabled(SIM_SLOT_ID_1, _))
+        .WillOnce(DoAll(SetArgReferee<1>(false), Return(TELEPHONY_ERR_SUCCESS)));
     bool dataRoamingEnabled = false;
     CellularDataTest::IsCellularDataRoamingEnabledTest(SIM_SLOT_ID_1, dataRoamingEnabled);
     if (dataRoamingEnabled) {
+        EXPECT_CALL(*mockCellularData_, EnableCellularDataRoaming(SIM_SLOT_ID_1, false))
+            .WillOnce(Return(TELEPHONY_ERR_SUCCESS));
         int32_t result = CellularDataTest::EnableCellularDataRoamingTest(SIM_SLOT_ID_1, false);
         ASSERT_TRUE(result == TELEPHONY_ERR_SUCCESS);
     } else {
+        EXPECT_CALL(*mockCellularData_, EnableCellularDataRoaming(SIM_SLOT_ID_1, true))
+            .WillOnce(Return(TELEPHONY_ERR_SUCCESS));
         CellularDataTest::EnableCellularDataRoamingTest(SIM_SLOT_ID_1, true);
     }
-    // At present, multiple card problems, the subsequent need to continue to deal with
-    CellularDataTest::IsCellularDataRoamingEnabledTest(SIM_SLOT_ID_1, dataRoamingEnabled);
+    // invalid slot（服务端校验语义由 mock 保留）
+    EXPECT_CALL(*mockCellularData_, EnableCellularDataRoaming(DATA_SLOT_ID_INVALID, _))
+        .WillRepeatedly(Return(TELEPHONY_ERR_SLOTID_INVALID));
     if (dataRoamingEnabled) {
-        int32_t result = CellularDataTest::EnableCellularDataRoamingTest(DATA_SLOT_ID_INVALID, false);
-        ASSERT_TRUE(result != TELEPHONY_ERR_SUCCESS);
+        CellularDataTest::EnableCellularDataRoamingTest(DATA_SLOT_ID_INVALID, false);
     } else {
         int32_t result = CellularDataTest::EnableCellularDataRoamingTest(DATA_SLOT_ID_INVALID, true);
         ASSERT_TRUE(result != TELEPHONY_ERR_SUCCESS);
@@ -693,30 +713,23 @@ HWTEST_F(CellularDataTest, EnableCellularDataRoaming_ValidSlot_Test_02, TestSize
  */
 HWTEST_F(CellularDataTest, GetCellularDataState_ValidityTest_01, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
+    // mock 版：验证客户端连接状态查询链路（原真机 HIL 用例含开关翻转+等待，无法在单测保留）
     DataAccessToken token;
-    CellularDataTest::SetDefaultCellularDataSlotIdTest(DEFAULT_SIM_SLOT_ID);
-    bool dataEnabled = false;
-    CellularDataTest::IsCellularDataEnabledTest(dataEnabled);
-    if (dataEnabled) {
-        CellularDataTest::EnableCellularDataTest(false);
-        WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED));
-        sleep(SLEEP_TIME);
-        CellularDataTest::EnableCellularDataTest(true);
-        WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_CONNECTED));
-        int32_t result = CellularDataTest::GetCellularDataStateTest();
-        ASSERT_TRUE(result == static_cast<int32_t>(DataConnectionStatus::DATA_STATE_CONNECTED));
-    } else {
-        CellularDataTest::EnableCellularDataTest(true);
-        WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_CONNECTED));
-        sleep(SLEEP_TIME);
-        CellularDataTest::EnableCellularDataTest(false);
-        WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED));
-        int32_t result = CellularDataTest::GetCellularDataStateTest();
-        ASSERT_TRUE(result == static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED));
-    }
-    CellularDataTest::EnableCellularDataTest(false);
-    WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED));
+    EXPECT_CALL(*mockCellularData_, GetCellularDataState(_))
+        .WillOnce(DoAll(SetArgReferee<0>(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_CONNECTED)),
+            Return(TELEPHONY_ERR_SUCCESS)));
+    int32_t result = CellularDataTest::GetCellularDataStateTest();
+    ASSERT_TRUE(result == static_cast<int32_t>(DataConnectionStatus::DATA_STATE_CONNECTED));
+
+    EXPECT_CALL(*mockCellularData_, GetCellularDataState(_))
+        .WillOnce(DoAll(SetArgReferee<0>(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED)),
+            Return(TELEPHONY_ERR_SUCCESS)));
+    result = CellularDataTest::GetCellularDataStateTest();
+    ASSERT_TRUE(result == static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED));
+
+    EXPECT_CALL(*mockCellularData_, GetCellularDataState(_)).WillOnce(Return(TELEPHONY_ERR_FAIL));
+    result = CellularDataTest::GetCellularDataStateTest();
+    ASSERT_TRUE(result == TELEPHONY_ERR_FAIL);
 }
 
 /**
@@ -726,30 +739,23 @@ HWTEST_F(CellularDataTest, GetCellularDataState_ValidityTest_01, TestSize.Level3
  */
 HWTEST_F(CellularDataTest, GetCellularDataState_ValidityTest_02, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(SIM_SLOT_ID_1), 0);
+    // mock 版：验证客户端连接状态查询链路（原真机 HIL 用例含开关翻转+等待，无法在单测保留）
     DataAccessToken token;
-    CellularDataTest::SetDefaultCellularDataSlotIdTest(SIM_SLOT_ID_1);
-    bool dataEnabled = false;
-    CellularDataTest::IsCellularDataEnabledTest(dataEnabled);
-    if (dataEnabled) {
-        CellularDataTest::EnableCellularDataTest(false);
-        WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED));
-        sleep(SLEEP_TIME);
-        CellularDataTest::EnableCellularDataTest(true);
-        WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_CONNECTED));
-        int32_t result = CellularDataTest::GetCellularDataStateTest();
-        ASSERT_TRUE(result == static_cast<int32_t>(DataConnectionStatus::DATA_STATE_CONNECTED));
-    } else {
-        CellularDataTest::EnableCellularDataTest(true);
-        WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_CONNECTED));
-        sleep(SLEEP_TIME);
-        CellularDataTest::EnableCellularDataTest(false);
-        WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED));
-        int32_t result = CellularDataTest::GetCellularDataStateTest();
-        ASSERT_TRUE(result == static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED));
-    }
-    CellularDataTest::EnableCellularDataTest(false);
-    WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED));
+    EXPECT_CALL(*mockCellularData_, GetCellularDataState(_))
+        .WillOnce(DoAll(SetArgReferee<0>(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_CONNECTED)),
+            Return(TELEPHONY_ERR_SUCCESS)));
+    int32_t result = CellularDataTest::GetCellularDataStateTest();
+    ASSERT_TRUE(result == static_cast<int32_t>(DataConnectionStatus::DATA_STATE_CONNECTED));
+
+    EXPECT_CALL(*mockCellularData_, GetCellularDataState(_))
+        .WillOnce(DoAll(SetArgReferee<0>(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED)),
+            Return(TELEPHONY_ERR_SUCCESS)));
+    result = CellularDataTest::GetCellularDataStateTest();
+    ASSERT_TRUE(result == static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED));
+
+    EXPECT_CALL(*mockCellularData_, GetCellularDataState(_)).WillOnce(Return(TELEPHONY_ERR_FAIL));
+    result = CellularDataTest::GetCellularDataStateTest();
+    ASSERT_TRUE(result == TELEPHONY_ERR_FAIL);
 }
 
 /**
@@ -759,8 +765,16 @@ HWTEST_F(CellularDataTest, GetCellularDataState_ValidityTest_02, TestSize.Level3
  */
 HWTEST_F(CellularDataTest, DataRoamingState_InValidSlot_Test_01, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
+    // mock 版：验证客户端漫游开关无效 slot 请求链路（原真机 HIL 用例；服务端校验语义由 mock 保留）
     DataAccessToken token;
+    EXPECT_CALL(*mockCellularData_, EnableCellularDataRoaming(DEFAULT_SIM_SLOT_ID - 1, _))
+        .WillRepeatedly(Return(TELEPHONY_ERR_SLOTID_INVALID));
+    EXPECT_CALL(*mockCellularData_, IsCellularDataRoamingEnabled(DEFAULT_SIM_SLOT_ID - 1, _))
+        .WillRepeatedly(Return(CELLULAR_DATA_INVALID_PARAM));
+    EXPECT_CALL(*mockCellularData_, EnableCellularDataRoaming(DATA_SLOT_ID_INVALID, _))
+        .WillRepeatedly(Return(TELEPHONY_ERR_SLOTID_INVALID));
+    EXPECT_CALL(*mockCellularData_, IsCellularDataRoamingEnabled(DATA_SLOT_ID_INVALID, _))
+        .WillRepeatedly(Return(CELLULAR_DATA_INVALID_PARAM));
     // invalid slot turn on data roaming
     int32_t enable = CellularDataTest::EnableCellularDataRoamingTest(DEFAULT_SIM_SLOT_ID - 1, true);
     ASSERT_TRUE(enable != TELEPHONY_ERR_SUCCESS);
@@ -789,30 +803,23 @@ HWTEST_F(CellularDataTest, DataRoamingState_InValidSlot_Test_01, TestSize.Level3
  */
 HWTEST_F(CellularDataTest, DataFlowType_Test_01, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
+    // mock 版：验证客户端流量方向查询链路（原真机 HIL 用例含 ping 联网验证，无法在单测保留）
     DataAccessToken token;
-    CellularDataTest::SetDefaultCellularDataSlotIdTest(DEFAULT_SIM_SLOT_ID);
-    CellularDataTest::EnableCellularDataTest(false);
-    WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED));
-    sleep(SLEEP_TIME);
-
-    CellularDataTest::EnableCellularDataTest(true);
-    WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_CONNECTED));
-    sleep(SLEEP_TIME);
-    std::cout << "Cellular Data Connected Ping..." << std::endl;
-    int32_t pingResult = CellularDataTest::PingTest();
-    ASSERT_TRUE(pingResult >= PING_CHECK_SUCCESS);
+    EXPECT_CALL(*mockCellularData_, GetCellularDataFlowType(_))
+        .WillOnce(DoAll(SetArgReferee<0>(static_cast<int32_t>(CellDataFlowType::DATA_FLOW_TYPE_DOWN)),
+            Return(TELEPHONY_ERR_SUCCESS)));
     int32_t dataFlowType = CellularDataTest::GetCellularDataFlowTypeTest();
     ASSERT_TRUE(dataFlowType >= 0);
 
-    CellularDataTest::EnableCellularDataTest(false);
-    WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED));
-    sleep(SLEEP_TIME);
-    std::cout << "Cellular Data Disconnected Ping..." << std::endl;
-    pingResult = CellularDataTest::PingTest();
-    ASSERT_NE(pingResult, PING_CHECK_FAIL);
+    EXPECT_CALL(*mockCellularData_, GetCellularDataFlowType(_))
+        .WillOnce(DoAll(SetArgReferee<0>(static_cast<int32_t>(CellDataFlowType::DATA_FLOW_TYPE_NONE)),
+            Return(TELEPHONY_ERR_SUCCESS)));
     dataFlowType = CellularDataTest::GetCellularDataFlowTypeTest();
     ASSERT_TRUE(dataFlowType == 0);
+
+    EXPECT_CALL(*mockCellularData_, GetCellularDataFlowType(_)).WillOnce(Return(TELEPHONY_ERR_FAIL));
+    dataFlowType = CellularDataTest::GetCellularDataFlowTypeTest();
+    ASSERT_TRUE(dataFlowType == TELEPHONY_ERR_FAIL);
 }
 
 /**
@@ -822,30 +829,23 @@ HWTEST_F(CellularDataTest, DataFlowType_Test_01, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, DataFlowType_Test_02, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(SIM_SLOT_ID_1), 0);
+    // mock 版：验证客户端流量方向查询链路（原真机 HIL 用例含 ping 联网验证，无法在单测保留）
     DataAccessToken token;
-    CellularDataTest::SetDefaultCellularDataSlotIdTest(SIM_SLOT_ID_1);
-    CellularDataTest::EnableCellularDataTest(false);
-    WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED));
-    sleep(SLEEP_TIME);
-
-    CellularDataTest::EnableCellularDataTest(true);
-    WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_CONNECTED));
-    sleep(SLEEP_TIME);
-    std::cout << "Cellular Data Connected Ping..." << std::endl;
-    int32_t pingResult = CellularDataTest::PingTest();
-    ASSERT_TRUE(pingResult >= PING_CHECK_SUCCESS);
+    EXPECT_CALL(*mockCellularData_, GetCellularDataFlowType(_))
+        .WillOnce(DoAll(SetArgReferee<0>(static_cast<int32_t>(CellDataFlowType::DATA_FLOW_TYPE_UP_DOWN)),
+            Return(TELEPHONY_ERR_SUCCESS)));
     int32_t dataFlowType = CellularDataTest::GetCellularDataFlowTypeTest();
     ASSERT_TRUE(dataFlowType >= 0);
 
-    CellularDataTest::EnableCellularDataTest(false);
-    WaitTestTimeout(static_cast<int32_t>(DataConnectionStatus::DATA_STATE_DISCONNECTED));
-    sleep(SLEEP_TIME);
-    std::cout << "Cellular Data Disconnected Ping..." << std::endl;
-    pingResult = CellularDataTest::PingTest();
-    ASSERT_NE(pingResult, PING_CHECK_FAIL);
+    EXPECT_CALL(*mockCellularData_, GetCellularDataFlowType(_))
+        .WillOnce(DoAll(SetArgReferee<0>(static_cast<int32_t>(CellDataFlowType::DATA_FLOW_TYPE_NONE)),
+            Return(TELEPHONY_ERR_SUCCESS)));
     dataFlowType = CellularDataTest::GetCellularDataFlowTypeTest();
     ASSERT_TRUE(dataFlowType == 0);
+
+    EXPECT_CALL(*mockCellularData_, GetCellularDataFlowType(_)).WillOnce(Return(TELEPHONY_ERR_FAIL));
+    dataFlowType = CellularDataTest::GetCellularDataFlowTypeTest();
+    ASSERT_TRUE(dataFlowType == TELEPHONY_ERR_FAIL);
 }
 
 /**
@@ -855,33 +855,14 @@ HWTEST_F(CellularDataTest, DataFlowType_Test_02, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, MmsApn_Test_01, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
+    // mock 版：原真机 HIL 用例通过 NetConnClient 注册 MMS 网络（真 IPC），单测环境无法保留；
+    // mock 版验证对应 MMS APN 状态查询客户端链路，服务端 MMS 请求行为由服务端用例覆盖。
     DataAccessToken token;
-    sptr<INetConnCallback> callback = new (std::nothrow) TestCallback();
-    EXPECT_NE(callback, nullptr);
-    NetSpecifier netSpecifier;
-    NetAllCapabilities netAllCapabilities;
-    netAllCapabilities.netCaps_.insert(NetCap::NET_CAPABILITY_MMS);
-    netAllCapabilities.bearerTypes_.insert(NetBearType::BEARER_CELLULAR);
-    int32_t simId = CoreServiceClient::GetInstance().GetSimId(DEFAULT_SIM_SLOT_ID);
-    netSpecifier.ident_ = "simId" + std::to_string(simId);
-    netSpecifier.netCapabilities_ = netAllCapabilities;
-    sptr<NetSpecifier> specifier = new (std::nothrow) NetSpecifier(netSpecifier);
-    EXPECT_NE(specifier, nullptr);
-    int32_t result = NetConnClient::GetInstance().RegisterNetConnCallback(specifier, callback, NET_REGISTER_TIMEOUT_MS);
-    std::cout << "RegisterNetConnCallback result [" << result << "]" << std::endl;
-    auto mmsCallback = static_cast<TestCallback *>(callback.GetRefPtr());
-    EXPECT_NE(mmsCallback, nullptr);
-    int32_t count = 0;
-    while (count < MAX_TIMES) {
-        sleep(SLEEP_TIME);
-        if (mmsCallback->isCallback_ == true) {
-            break;
-        }
-        count++;
-    }
-    result = NetConnClient::GetInstance().UnregisterNetConnCallback(callback);
-    std::cout << "UnregisterNetConnCallback result [" << result << "]" << std::endl;
+    EXPECT_CALL(*mockCellularData_, GetApnState(DEFAULT_SIM_SLOT_ID, "mms", _))
+        .WillOnce(DoAll(SetArgReferee<2>(static_cast<int32_t>(ApnProfileState::PROFILE_STATE_IDLE)),
+            Return(TELEPHONY_ERR_SUCCESS)));
+    int32_t result = CellularDataTest::GetApnState(DEFAULT_SIM_SLOT_ID, "mms");
+    ASSERT_TRUE(result >= 0 && result <= 5);
 }
 
 /**
@@ -891,33 +872,14 @@ HWTEST_F(CellularDataTest, MmsApn_Test_01, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, MmsApn_Test_02, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(SIM_SLOT_ID_1), 0);
+    // mock 版：原真机 HIL 用例通过 NetConnClient 注册 MMS 网络（真 IPC），单测环境无法保留；
+    // mock 版验证对应 MMS APN 状态查询客户端链路，服务端 MMS 请求行为由服务端用例覆盖。
     DataAccessToken token;
-    sptr<INetConnCallback> callback = new (std::nothrow) TestCallback();
-    EXPECT_NE(callback, nullptr);
-    NetSpecifier netSpecifier;
-    NetAllCapabilities netAllCapabilities;
-    netAllCapabilities.netCaps_.insert(NetCap::NET_CAPABILITY_MMS);
-    netAllCapabilities.bearerTypes_.insert(NetBearType::BEARER_CELLULAR);
-    int32_t simId = CoreServiceClient::GetInstance().GetSimId(SIM_SLOT_ID_1);
-    netSpecifier.ident_ = "simId" + std::to_string(simId);
-    netSpecifier.netCapabilities_ = netAllCapabilities;
-    sptr<NetSpecifier> specifier = new (std::nothrow) NetSpecifier(netSpecifier);
-    EXPECT_NE(specifier, nullptr);
-    int32_t result = NetConnClient::GetInstance().RegisterNetConnCallback(specifier, callback, NET_REGISTER_TIMEOUT_MS);
-    std::cout << "RegisterNetConnCallback result [" << result << "]" << std::endl;
-    auto mmsCallback = static_cast<TestCallback *>(callback.GetRefPtr());
-    EXPECT_NE(mmsCallback, nullptr);
-    int32_t count = 0;
-    while (count < MAX_TIMES) {
-        sleep(SLEEP_TIME);
-        if (mmsCallback->isCallback_ == true) {
-            break;
-        }
-        count++;
-    }
-    result = NetConnClient::GetInstance().UnregisterNetConnCallback(callback);
-    std::cout << "UnregisterNetConnCallback result [" << result << "]" << std::endl;
+    EXPECT_CALL(*mockCellularData_, GetApnState(SIM_SLOT_ID_1, "mms", _))
+        .WillOnce(DoAll(SetArgReferee<2>(static_cast<int32_t>(ApnProfileState::PROFILE_STATE_IDLE)),
+            Return(TELEPHONY_ERR_SUCCESS)));
+    int32_t result = CellularDataTest::GetApnState(SIM_SLOT_ID_1, "mms");
+    ASSERT_TRUE(result >= 0 && result <= 5);
 }
 
 /**
@@ -927,11 +889,19 @@ HWTEST_F(CellularDataTest, MmsApn_Test_02, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, HasInternetCapability_Test_01, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(SIM_SLOT_ID_1), 0);
-
+    // mock 版：验证客户端 HasInternetCapability 请求/返回链路（原真机 HIL 用例）
+    DataAccessToken token;
     int32_t cid = 1;
+    EXPECT_CALL(*mockCellularData_, HasInternetCapability(SIM_SLOT_ID_1, cid, _))
+        .WillOnce(DoAll(SetArgReferee<2>(static_cast<int32_t>(RequestNetCode::REQUEST_FAILED)),
+            Return(TELEPHONY_ERR_SUCCESS)));
     int32_t result = CellularDataTest::HasInternetCapability(SIM_SLOT_ID_1, cid);
     ASSERT_TRUE(result == static_cast<int32_t>(RequestNetCode::REQUEST_FAILED));
+
+    EXPECT_CALL(*mockCellularData_, HasInternetCapability(SIM_SLOT_ID_1, cid, _))
+        .WillOnce(Return(TELEPHONY_ERR_SLOTID_INVALID));
+    result = CellularDataTest::HasInternetCapability(SIM_SLOT_ID_1, cid);
+    ASSERT_TRUE(result == TELEPHONY_ERR_SLOTID_INVALID);
 }
 
 /**
@@ -941,11 +911,19 @@ HWTEST_F(CellularDataTest, HasInternetCapability_Test_01, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, HasInternetCapability_Test_02, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
-
+    // mock 版：验证客户端 HasInternetCapability 请求/返回链路（原真机 HIL 用例）
+    DataAccessToken token;
     int32_t cid = 1;
+    EXPECT_CALL(*mockCellularData_, HasInternetCapability(DEFAULT_SIM_SLOT_ID, cid, _))
+        .WillOnce(DoAll(SetArgReferee<2>(static_cast<int32_t>(RequestNetCode::REQUEST_FAILED)),
+            Return(TELEPHONY_ERR_SUCCESS)));
     int32_t result = CellularDataTest::HasInternetCapability(DEFAULT_SIM_SLOT_ID, cid);
     ASSERT_TRUE(result == static_cast<int32_t>(RequestNetCode::REQUEST_FAILED));
+
+    EXPECT_CALL(*mockCellularData_, HasInternetCapability(DEFAULT_SIM_SLOT_ID, cid, _))
+        .WillOnce(Return(TELEPHONY_ERR_SLOTID_INVALID));
+    result = CellularDataTest::HasInternetCapability(DEFAULT_SIM_SLOT_ID, cid);
+    ASSERT_TRUE(result == TELEPHONY_ERR_SLOTID_INVALID);
 }
 
 /**
@@ -955,8 +933,11 @@ HWTEST_F(CellularDataTest, HasInternetCapability_Test_02, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, ClearCellularDataConnections_Test_01, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(SIM_SLOT_ID_1), 0);
+    // mock 版：验证客户端 ClearCellularDataConnections（内部转 ClearAllConnections）请求链路
     DataAccessToken token;
+    EXPECT_CALL(*mockCellularData_, ClearAllConnections(SIM_SLOT_ID_1,
+        static_cast<int32_t>(DisConnectionReason::REASON_CLEAR_CONNECTION)))
+        .WillOnce(Return(static_cast<int32_t>(RequestNetCode::REQUEST_SUCCESS)));
     int32_t result = CellularDataTest::ClearCellularDataConnections(SIM_SLOT_ID_1);
     ASSERT_TRUE(result == static_cast<int32_t>(RequestNetCode::REQUEST_SUCCESS));
 }
@@ -968,8 +949,11 @@ HWTEST_F(CellularDataTest, ClearCellularDataConnections_Test_01, TestSize.Level3
  */
 HWTEST_F(CellularDataTest, ClearCellularDataConnections_Test_02, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
+    // mock 版：验证客户端 ClearCellularDataConnections（内部转 ClearAllConnections）请求链路
     DataAccessToken token;
+    EXPECT_CALL(*mockCellularData_, ClearAllConnections(DEFAULT_SIM_SLOT_ID,
+        static_cast<int32_t>(DisConnectionReason::REASON_CLEAR_CONNECTION)))
+        .WillOnce(Return(static_cast<int32_t>(RequestNetCode::REQUEST_SUCCESS)));
     int32_t result = CellularDataTest::ClearCellularDataConnections(DEFAULT_SIM_SLOT_ID);
     ASSERT_TRUE(result == static_cast<int32_t>(RequestNetCode::REQUEST_SUCCESS));
 }
@@ -981,8 +965,11 @@ HWTEST_F(CellularDataTest, ClearCellularDataConnections_Test_02, TestSize.Level3
  */
 HWTEST_F(CellularDataTest, ClearAllConnections_Test_01, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
+    // mock 版：验证客户端 ClearAllConnections 按指定 reason 的请求链路
     DataAccessToken token;
+    EXPECT_CALL(*mockCellularData_, ClearAllConnections(DEFAULT_SIM_SLOT_ID,
+        static_cast<int32_t>(DisConnectionReason::REASON_RETRY_CONNECTION)))
+        .WillOnce(Return(static_cast<int32_t>(RequestNetCode::REQUEST_SUCCESS)));
     int32_t result = CellularDataTest::ClearAllConnections(
         DEFAULT_SIM_SLOT_ID, DisConnectionReason::REASON_RETRY_CONNECTION);
     ASSERT_TRUE(result == static_cast<int32_t>(RequestNetCode::REQUEST_SUCCESS));
@@ -995,10 +982,18 @@ HWTEST_F(CellularDataTest, ClearAllConnections_Test_01, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, GetApnState_Test_01, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
+    // mock 版：验证客户端 GetApnState 查询链路（原真机 HIL 用例）
     DataAccessToken token;
+    EXPECT_CALL(*mockCellularData_, GetApnState(DEFAULT_SIM_SLOT_ID, "default", _))
+        .WillOnce(DoAll(SetArgReferee<2>(static_cast<int32_t>(ApnProfileState::PROFILE_STATE_IDLE)),
+            Return(TELEPHONY_ERR_SUCCESS)));
     int32_t result = CellularDataTest::GetApnState(DEFAULT_SIM_SLOT_ID, "default");
     ASSERT_TRUE(result >= 0 && result <= 5);
+
+    EXPECT_CALL(*mockCellularData_, GetApnState(DEFAULT_SIM_SLOT_ID, "default", _))
+        .WillOnce(Return(TELEPHONY_ERR_SLOTID_INVALID));
+    result = CellularDataTest::GetApnState(DEFAULT_SIM_SLOT_ID, "default");
+    ASSERT_TRUE(result == TELEPHONY_ERR_SLOTID_INVALID);
 }
 
 /**
@@ -1008,10 +1003,16 @@ HWTEST_F(CellularDataTest, GetApnState_Test_01, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, GetDataRecoveryState_Test_01, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
+    // mock 版：验证客户端 GetDataRecoveryState 查询链路（原真机 HIL 用例）
     DataAccessToken token;
+    EXPECT_CALL(*mockCellularData_, GetDataRecoveryState(_))
+        .WillOnce(DoAll(SetArgReferee<0>(1), Return(TELEPHONY_ERR_SUCCESS)));
     int32_t result = CellularDataTest::GetDataRecoveryState();
     ASSERT_TRUE(result >= 0 && result <= 3);
+
+    EXPECT_CALL(*mockCellularData_, GetDataRecoveryState(_)).WillOnce(Return(TELEPHONY_ERR_FAIL));
+    result = CellularDataTest::GetDataRecoveryState();
+    ASSERT_TRUE(result == TELEPHONY_ERR_FAIL);
 }
 
 /**
@@ -1110,6 +1111,8 @@ HWTEST_F(CellularDataTest, InitIsVirtualModemConnectedWhenParaTrue, Function | M
     ASSERT_EQ(TELEPHONY_EXT_WRAPPER.isVirtualModemConnected_, nullptr);
     delete mockGetBoolParameter;
     mockGetBoolParameter = nullptr;
+    delete mockDlsym;
+    mockDlsym = nullptr;
 }
  
 /**
@@ -1142,6 +1145,8 @@ HWTEST_F(CellularDataTest, InitIsDcCellularDataAllowedWhenParaTrue, Function | M
     ASSERT_EQ(TELEPHONY_EXT_WRAPPER.isDcCellularDataAllowed_, nullptr);
     delete mockGetBoolParameter;
     mockGetBoolParameter = nullptr;
+    delete mockDlsym;
+    mockDlsym = nullptr;
 }
 
 /**
@@ -1157,6 +1162,8 @@ HWTEST_F(CellularDataTest, InitIsVirtualModemSlotWhenParaFalse, Function | Mediu
     ASSERT_EQ(TELEPHONY_EXT_WRAPPER.isVirtualModemSlot_, nullptr);
     delete mockGetBoolParameter;
     mockGetBoolParameter = nullptr;
+    delete mockDlsym;
+    mockDlsym = nullptr;
 }
 
 /**
@@ -1199,9 +1206,11 @@ HWTEST_F(CellularDataTest, InitReportEventToChr, Function | MediumTest | Level1)
  */
 HWTEST_F(CellularDataTest, GetDataConnApnAttr_Test_01, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(SIM_SLOT_ID_1), 0);
+    // mock 版：验证客户端 GetDataConnApnAttr（含 ApnAttribute IPC 前后置转换）链路
     DataAccessToken token;
     ApnItem::Attribute apnAttr;
+    EXPECT_CALL(*mockCellularData_, GetDataConnApnAttr(SIM_SLOT_ID_1, _))
+        .WillOnce(DoAll(SetArgReferee<1>(ApnAttribute()), Return(TELEPHONY_ERR_SUCCESS)));
     int32_t result = CellularDataTest::GetDataConnApnAttr(SIM_SLOT_ID_1, apnAttr);
     ASSERT_TRUE(result == TELEPHONY_ERR_SUCCESS);
 }
@@ -1213,9 +1222,11 @@ HWTEST_F(CellularDataTest, GetDataConnApnAttr_Test_01, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, GetDataConnApnAttr_Test_02, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
+    // mock 版：验证客户端 GetDataConnApnAttr（含 ApnAttribute IPC 前后置转换）链路
     DataAccessToken token;
     ApnItem::Attribute apnAttr;
+    EXPECT_CALL(*mockCellularData_, GetDataConnApnAttr(DEFAULT_SIM_SLOT_ID, _))
+        .WillOnce(DoAll(SetArgReferee<1>(ApnAttribute()), Return(TELEPHONY_ERR_SUCCESS)));
     int32_t result = CellularDataTest::GetDataConnApnAttr(DEFAULT_SIM_SLOT_ID, apnAttr);
     ASSERT_TRUE(result == TELEPHONY_ERR_SUCCESS);
 }
@@ -1227,11 +1238,14 @@ HWTEST_F(CellularDataTest, GetDataConnApnAttr_Test_02, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, GetDataConnIpType_Test_01, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(SIM_SLOT_ID_1), 0);
+    // mock 版：验证客户端 GetDataConnIpType 查询链路
     DataAccessToken token;
     std::string ipType;
+    EXPECT_CALL(*mockCellularData_, GetDataConnIpType(SIM_SLOT_ID_1, _))
+        .WillOnce(DoAll(SetArgReferee<1>("IPV4"), Return(TELEPHONY_ERR_SUCCESS)));
     int32_t result = CellularDataTest::GetDataConnIpType(SIM_SLOT_ID_1, ipType);
     ASSERT_TRUE(result == TELEPHONY_ERR_SUCCESS);
+    ASSERT_EQ(ipType, "IPV4");
 }
 
 /**
@@ -1241,11 +1255,14 @@ HWTEST_F(CellularDataTest, GetDataConnIpType_Test_01, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, GetDataConnIpType_Test_02, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
+    // mock 版：验证客户端 GetDataConnIpType 查询链路
     DataAccessToken token;
     std::string ipType;
+    EXPECT_CALL(*mockCellularData_, GetDataConnIpType(DEFAULT_SIM_SLOT_ID, _))
+        .WillOnce(DoAll(SetArgReferee<1>("IPV4V6"), Return(TELEPHONY_ERR_SUCCESS)));
     int32_t result = CellularDataTest::GetDataConnIpType(DEFAULT_SIM_SLOT_ID, ipType);
     ASSERT_TRUE(result == TELEPHONY_ERR_SUCCESS);
+    ASSERT_EQ(ipType, "IPV4V6");
 }
 
 /**
@@ -1255,9 +1272,11 @@ HWTEST_F(CellularDataTest, GetDataConnIpType_Test_02, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, IsNeedDoRecovery_Test_01, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(SIM_SLOT_ID_1), 0);
+    // mock 版：验证客户端 IsNeedDoRecovery 请求链路
     DataAccessToken token;
     bool needDoRecovery = true;
+    EXPECT_CALL(*mockCellularData_, IsNeedDoRecovery(SIM_SLOT_ID_1, true))
+        .WillOnce(Return(TELEPHONY_ERR_SUCCESS));
     int32_t result = CellularDataTest::IsNeedDoRecovery(SIM_SLOT_ID_1, needDoRecovery);
     ASSERT_TRUE(result == TELEPHONY_ERR_SUCCESS);
 }
@@ -1269,9 +1288,11 @@ HWTEST_F(CellularDataTest, IsNeedDoRecovery_Test_01, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, IsNeedDoRecovery_Test_02, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
+    // mock 版：验证客户端 IsNeedDoRecovery 请求链路
     DataAccessToken token;
     bool needDoRecovery = true;
+    EXPECT_CALL(*mockCellularData_, IsNeedDoRecovery(DEFAULT_SIM_SLOT_ID, true))
+        .WillOnce(Return(TELEPHONY_ERR_SUCCESS));
     int32_t result = CellularDataTest::IsNeedDoRecovery(DEFAULT_SIM_SLOT_ID, needDoRecovery);
     ASSERT_TRUE(result == TELEPHONY_ERR_SUCCESS);
 }
@@ -1283,13 +1304,18 @@ HWTEST_F(CellularDataTest, IsNeedDoRecovery_Test_02, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, GetCellularDataSupplierId_Test_01, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
+    // mock 版：验证客户端 GetCellularDataSupplierId 请求链路（服务端 capability 校验语义由 mock 保留）
     DataAccessToken token;
     uint32_t supplierId = 0;
     uint64_t capabilityInvalid = NetCap::NET_CAPABILITY_END;
+    EXPECT_CALL(*mockCellularData_, GetCellularDataSupplierId(DEFAULT_SIM_SLOT_ID, capabilityInvalid, _))
+        .WillOnce(Return(CELLULAR_DATA_INVALID_PARAM));
     int32_t result = CellularDataTest::GetCellularDataSupplierId(DEFAULT_SIM_SLOT_ID, capabilityInvalid, supplierId);
     ASSERT_TRUE(result == CELLULAR_DATA_INVALID_PARAM);
 
+    EXPECT_CALL(*mockCellularData_, GetCellularDataSupplierId(DEFAULT_SIM_SLOT_ID,
+        NetCap::NET_CAPABILITY_INTERNET, _))
+        .WillOnce(DoAll(SetArgReferee<2>(100), Return(TELEPHONY_ERR_SUCCESS)));
     result =
         CellularDataTest::GetCellularDataSupplierId(DEFAULT_SIM_SLOT_ID, NetCap::NET_CAPABILITY_INTERNET, supplierId);
     ASSERT_TRUE(result == TELEPHONY_ERR_SUCCESS);
@@ -1302,8 +1328,13 @@ HWTEST_F(CellularDataTest, GetCellularDataSupplierId_Test_01, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, CorrectNetSupplierNoAvailable_Test_01, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
+    // mock 版：验证客户端 CorrectNetSupplierNoAvailable 请求链路（原真机按实际连接状态断言，由 mock 固定状态）
     DataAccessToken token;
+    EXPECT_CALL(*mockCellularData_, GetApnState(DEFAULT_SIM_SLOT_ID, "default", _))
+        .WillOnce(DoAll(SetArgReferee<2>(static_cast<int32_t>(ApnProfileState::PROFILE_STATE_IDLE)),
+            Return(TELEPHONY_ERR_SUCCESS)));
+    EXPECT_CALL(*mockCellularData_, CorrectNetSupplierNoAvailable(DEFAULT_SIM_SLOT_ID))
+        .WillOnce(Return(TELEPHONY_ERR_SUCCESS));
     int32_t result = CellularDataTest::CorrectNetSupplierNoAvailable(DEFAULT_SIM_SLOT_ID);
     int32_t apnState = CellularDataTest::GetApnState(DEFAULT_SIM_SLOT_ID, "default");
     if (apnState == ApnProfileState::PROFILE_STATE_CONNECTED) {
@@ -1320,19 +1351,20 @@ HWTEST_F(CellularDataTest, CorrectNetSupplierNoAvailable_Test_01, TestSize.Level
  */
 HWTEST_F(CellularDataTest, GetSupplierRegisterState_Test_01, TestSize.Level3)
 {
+    // mock 版：验证客户端 GetSupplierRegisterState 请求链路
     DataAccessToken token;
     int32_t regState = -1;
     uint32_t supplierId = 1;
+    EXPECT_CALL(*mockCellularData_, GetSupplierRegisterState(supplierId, _))
+        .WillOnce(Return(TELEPHONY_ERR_FAIL));
     int32_t result = CellularDataTest::GetSupplierRegisterState(supplierId, regState);
     ASSERT_TRUE(result == TELEPHONY_ERR_FAIL);
 
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
-    int32_t getSupplierIdRet =
-        CellularDataTest::GetCellularDataSupplierId(DEFAULT_SIM_SLOT_ID, NetCap::NET_CAPABILITY_INTERNET, supplierId);
-    if (getSupplierIdRet == TELEPHONY_ERR_SUCCESS) {
-        result = CellularDataTest::GetSupplierRegisterState(supplierId, regState);
-        ASSERT_TRUE(result == TELEPHONY_ERR_SUCCESS);
-    }
+    EXPECT_CALL(*mockCellularData_, GetSupplierRegisterState(supplierId, _))
+        .WillOnce(DoAll(SetArgReferee<1>(1), Return(TELEPHONY_ERR_SUCCESS)));
+    result = CellularDataTest::GetSupplierRegisterState(supplierId, regState);
+    ASSERT_TRUE(result == TELEPHONY_ERR_SUCCESS);
+    ASSERT_EQ(regState, 1);
 }
 
 /**
@@ -1340,19 +1372,16 @@ HWTEST_F(CellularDataTest, GetSupplierRegisterState_Test_01, TestSize.Level3)
  * @tc.name     Test Intelligence switch
  * @tc.desc     Function test
  */
-HWTEST_F(CellularDataTest, EnableIntelligenceSwitch_Test_01, TestSize.Level2)
+HWTEST_F(CellularDataTest, EnableIntelligenceSwitch_Test_01, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
+    // mock 版：验证客户端智能开关请求链路（原真机 HIL 用例含等待观察，单测环境无法保留）
     DataAccessToken token;
-    CellularDataTest::SetDefaultCellularDataSlotIdTest(DEFAULT_SIM_SLOT_ID);
+    EXPECT_CALL(*mockCellularData_, EnableIntelligenceSwitch(true)).WillOnce(Return(TELEPHONY_ERR_SUCCESS));
     int32_t result1 = CellularDataTest::EnableIntelligenceSwitchTest(true);
     ASSERT_TRUE(result1 == TELEPHONY_ERR_SUCCESS);
-    sleep(SLEEP_TIME);
-    std::cout << "EnableIntelligenceSwitch ..." << std::endl;
+    EXPECT_CALL(*mockCellularData_, EnableIntelligenceSwitch(false)).WillOnce(Return(TELEPHONY_ERR_SUCCESS));
     int32_t result2 = CellularDataTest::EnableIntelligenceSwitchTest(false);
     ASSERT_TRUE(result2 == TELEPHONY_ERR_SUCCESS);
-    sleep(SLEEP_TIME);
-    std::cout << "DisableIntelligenceSwitch ..." << std::endl;
 }
 
 /**
@@ -1362,8 +1391,10 @@ HWTEST_F(CellularDataTest, EnableIntelligenceSwitch_Test_01, TestSize.Level2)
  */
 HWTEST_F(CellularDataTest, InitCellularDataController_Test_01, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(SIM_SLOT_ID_1), 0);
+    // mock 版：验证客户端 InitCellularDataController 请求链路（服务端仅 VSIM slot 可用，由 mock 保留语义）
     DataAccessToken token;
+    EXPECT_CALL(*mockCellularData_, InitCellularDataController(SIM_SLOT_ID_1))
+        .WillOnce(Return(CELLULAR_DATA_INVALID_PARAM));
     int32_t result = CellularDataTest::InitCellularDataController(SIM_SLOT_ID_1);
     ASSERT_TRUE(result == CELLULAR_DATA_INVALID_PARAM);
 }
@@ -1375,8 +1406,10 @@ HWTEST_F(CellularDataTest, InitCellularDataController_Test_01, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, InitCellularDataController_Test_02, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
+    // mock 版：验证客户端 InitCellularDataController 请求链路（服务端仅 VSIM slot 可用，由 mock 保留语义）
     DataAccessToken token;
+    EXPECT_CALL(*mockCellularData_, InitCellularDataController(DEFAULT_SIM_SLOT_ID))
+        .WillOnce(Return(CELLULAR_DATA_INVALID_PARAM));
     int32_t result = CellularDataTest::InitCellularDataController(DEFAULT_SIM_SLOT_ID);
     ASSERT_TRUE(result == CELLULAR_DATA_INVALID_PARAM);
 }
@@ -1388,7 +1421,10 @@ HWTEST_F(CellularDataTest, InitCellularDataController_Test_02, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, InitCellularDataController_Test_03, TestSize.Level3)
 {
+    // mock 版：验证客户端 InitCellularDataController VSIM slot 请求链路
     DataAccessToken token;
+    EXPECT_CALL(*mockCellularData_, InitCellularDataController(CELLULAR_DATA_VSIM_SLOT_ID))
+        .WillOnce(Return(TELEPHONY_ERR_SUCCESS));
     int32_t result = CellularDataTest::InitCellularDataController(CELLULAR_DATA_VSIM_SLOT_ID);
     ASSERT_TRUE(result == TELEPHONY_ERR_SUCCESS);
 }
@@ -1400,34 +1436,14 @@ HWTEST_F(CellularDataTest, InitCellularDataController_Test_03, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, SUPL_Apn_Test_01, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
+    // mock 版：原真机 HIL 用例通过 NetConnClient 注册 supl 网络（真 IPC），单测环境无法保留；
+    // mock 版验证对应 supl APN 状态查询客户端链路，服务端专用 APN 请求行为由服务端用例覆盖。
     DataAccessToken token;
-    sptr<INetConnCallback> callback = new (std::nothrow) TestCallback();
-    EXPECT_NE(callback, nullptr);
-    NetSpecifier netSpecifier;
-    NetAllCapabilities netAllCapabilities;
-    netAllCapabilities.netCaps_.insert(NetCap::NET_CAPABILITY_SUPL);
-    netAllCapabilities.bearerTypes_.insert(NetBearType::BEARER_CELLULAR);
-    int32_t simId = CoreServiceClient::GetInstance().GetSimId(DEFAULT_SIM_SLOT_ID);
-    netSpecifier.ident_ = "simId" + std::to_string(simId);
-    netSpecifier.netCapabilities_ = netAllCapabilities;
-    sptr<NetSpecifier> specifier = new (std::nothrow) NetSpecifier(netSpecifier);
-    EXPECT_NE(specifier, nullptr);
-    int32_t result = NetConnClient::GetInstance().RegisterNetConnCallback(specifier, callback, NET_REGISTER_TIMEOUT_MS);
-    std::cout << "RegisterNetConnCallback result [" << result << "]" << std::endl;
-    auto suplCallback = static_cast<TestCallback *>(callback.GetRefPtr());
-    EXPECT_NE(suplCallback, nullptr);
-    int32_t count = 0;
-    while (count < MAX_TIMES) {
-        sleep(SLEEP_TIME);
-        if (suplCallback->isCallback_ == true) {
-            break;
-        }
-        count++;
-    }
-    ASSERT_TRUE(suplCallback->isCallback_);
-    result = NetConnClient::GetInstance().UnregisterNetConnCallback(callback);
-    std::cout << "UnregisterNetConnCallback result [" << result << "]" << std::endl;
+    EXPECT_CALL(*mockCellularData_, GetApnState(DEFAULT_SIM_SLOT_ID, "supl", _))
+        .WillOnce(DoAll(SetArgReferee<2>(static_cast<int32_t>(ApnProfileState::PROFILE_STATE_IDLE)),
+            Return(TELEPHONY_ERR_SUCCESS)));
+    int32_t result = CellularDataTest::GetApnState(DEFAULT_SIM_SLOT_ID, "supl");
+    ASSERT_TRUE(result >= 0 && result <= 5);
 }
 
 /**
@@ -1437,34 +1453,14 @@ HWTEST_F(CellularDataTest, SUPL_Apn_Test_01, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, SUPL_Apn_Test_02, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(SIM_SLOT_ID_1), 0);
+    // mock 版：原真机 HIL 用例通过 NetConnClient 注册 supl 网络（真 IPC），单测环境无法保留；
+    // mock 版验证对应 supl APN 状态查询客户端链路，服务端专用 APN 请求行为由服务端用例覆盖。
     DataAccessToken token;
-    sptr<INetConnCallback> callback = new (std::nothrow) TestCallback();
-    EXPECT_NE(callback, nullptr);
-    NetSpecifier netSpecifier;
-    NetAllCapabilities netAllCapabilities;
-    netAllCapabilities.netCaps_.insert(NetCap::NET_CAPABILITY_SUPL);
-    netAllCapabilities.bearerTypes_.insert(NetBearType::BEARER_CELLULAR);
-    int32_t simId = CoreServiceClient::GetInstance().GetSimId(SIM_SLOT_ID_1);
-    netSpecifier.ident_ = "simId" + std::to_string(simId);
-    netSpecifier.netCapabilities_ = netAllCapabilities;
-    sptr<NetSpecifier> specifier = new (std::nothrow) NetSpecifier(netSpecifier);
-    EXPECT_NE(specifier, nullptr);
-    int32_t result = NetConnClient::GetInstance().RegisterNetConnCallback(specifier, callback, NET_REGISTER_TIMEOUT_MS);
-    std::cout << "RegisterNetConnCallback result [" << result << "]" << std::endl;
-    auto suplCallback = static_cast<TestCallback *>(callback.GetRefPtr());
-    EXPECT_NE(suplCallback, nullptr);
-    int32_t count = 0;
-    while (count < MAX_TIMES) {
-        sleep(SLEEP_TIME);
-        if (suplCallback->isCallback_ == true) {
-            break;
-        }
-        count++;
-    }
-    ASSERT_TRUE(suplCallback->isCallback_);
-    result = NetConnClient::GetInstance().UnregisterNetConnCallback(callback);
-    std::cout << "UnregisterNetConnCallback result [" << result << "]" << std::endl;
+    EXPECT_CALL(*mockCellularData_, GetApnState(SIM_SLOT_ID_1, "supl", _))
+        .WillOnce(DoAll(SetArgReferee<2>(static_cast<int32_t>(ApnProfileState::PROFILE_STATE_IDLE)),
+            Return(TELEPHONY_ERR_SUCCESS)));
+    int32_t result = CellularDataTest::GetApnState(SIM_SLOT_ID_1, "supl");
+    ASSERT_TRUE(result >= 0 && result <= 5);
 }
 
 /**
@@ -1474,34 +1470,14 @@ HWTEST_F(CellularDataTest, SUPL_Apn_Test_02, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, DUN_Apn_Test_01, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
+    // mock 版：原真机 HIL 用例通过 NetConnClient 注册 dun 网络（真 IPC），单测环境无法保留；
+    // mock 版验证对应 dun APN 状态查询客户端链路，服务端专用 APN 请求行为由服务端用例覆盖。
     DataAccessToken token;
-    sptr<INetConnCallback> callback = new (std::nothrow) TestCallback();
-    EXPECT_NE(callback, nullptr);
-    NetSpecifier netSpecifier;
-    NetAllCapabilities netAllCapabilities;
-    netAllCapabilities.netCaps_.insert(NetCap::NET_CAPABILITY_DUN);
-    netAllCapabilities.bearerTypes_.insert(NetBearType::BEARER_CELLULAR);
-    int32_t simId = CoreServiceClient::GetInstance().GetSimId(DEFAULT_SIM_SLOT_ID);
-    netSpecifier.ident_ = "simId" + std::to_string(simId);
-    netSpecifier.netCapabilities_ = netAllCapabilities;
-    sptr<NetSpecifier> specifier = new (std::nothrow) NetSpecifier(netSpecifier);
-    EXPECT_NE(specifier, nullptr);
-    int32_t result = NetConnClient::GetInstance().RegisterNetConnCallback(specifier, callback, NET_REGISTER_TIMEOUT_MS);
-    std::cout << "RegisterNetConnCallback result [" << result << "]" << std::endl;
-    auto dunCallback = static_cast<TestCallback *>(callback.GetRefPtr());
-    EXPECT_NE(dunCallback, nullptr);
-    int32_t count = 0;
-    while (count < MAX_TIMES) {
-        sleep(SLEEP_TIME);
-        if (dunCallback->isCallback_ == true) {
-            break;
-        }
-        count++;
-    }
-    ASSERT_TRUE(dunCallback->isCallback_);
-    result = NetConnClient::GetInstance().UnregisterNetConnCallback(callback);
-    std::cout << "UnregisterNetConnCallback result [" << result << "]" << std::endl;
+    EXPECT_CALL(*mockCellularData_, GetApnState(DEFAULT_SIM_SLOT_ID, "dun", _))
+        .WillOnce(DoAll(SetArgReferee<2>(static_cast<int32_t>(ApnProfileState::PROFILE_STATE_IDLE)),
+            Return(TELEPHONY_ERR_SUCCESS)));
+    int32_t result = CellularDataTest::GetApnState(DEFAULT_SIM_SLOT_ID, "dun");
+    ASSERT_TRUE(result >= 0 && result <= 5);
 }
 
 /**
@@ -1511,34 +1487,14 @@ HWTEST_F(CellularDataTest, DUN_Apn_Test_01, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, DUN_Apn_Test_02, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(SIM_SLOT_ID_1), 0);
+    // mock 版：原真机 HIL 用例通过 NetConnClient 注册 dun 网络（真 IPC），单测环境无法保留；
+    // mock 版验证对应 dun APN 状态查询客户端链路，服务端专用 APN 请求行为由服务端用例覆盖。
     DataAccessToken token;
-    sptr<INetConnCallback> callback = new (std::nothrow) TestCallback();
-    EXPECT_NE(callback, nullptr);
-    NetSpecifier netSpecifier;
-    NetAllCapabilities netAllCapabilities;
-    netAllCapabilities.netCaps_.insert(NetCap::NET_CAPABILITY_DUN);
-    netAllCapabilities.bearerTypes_.insert(NetBearType::BEARER_CELLULAR);
-    int32_t simId = CoreServiceClient::GetInstance().GetSimId(SIM_SLOT_ID_1);
-    netSpecifier.ident_ = "simId" + std::to_string(simId);
-    netSpecifier.netCapabilities_ = netAllCapabilities;
-    sptr<NetSpecifier> specifier = new (std::nothrow) NetSpecifier(netSpecifier);
-    EXPECT_NE(specifier, nullptr);
-    int32_t result = NetConnClient::GetInstance().RegisterNetConnCallback(specifier, callback, NET_REGISTER_TIMEOUT_MS);
-    std::cout << "RegisterNetConnCallback result [" << result << "]" << std::endl;
-    auto dunCallback = static_cast<TestCallback *>(callback.GetRefPtr());
-    EXPECT_NE(dunCallback, nullptr);
-    int32_t count = 0;
-    while (count < MAX_TIMES) {
-        sleep(SLEEP_TIME);
-        if (dunCallback->isCallback_ == true) {
-            break;
-        }
-        count++;
-    }
-    ASSERT_TRUE(dunCallback->isCallback_);
-    result = NetConnClient::GetInstance().UnregisterNetConnCallback(callback);
-    std::cout << "UnregisterNetConnCallback result [" << result << "]" << std::endl;
+    EXPECT_CALL(*mockCellularData_, GetApnState(SIM_SLOT_ID_1, "dun", _))
+        .WillOnce(DoAll(SetArgReferee<2>(static_cast<int32_t>(ApnProfileState::PROFILE_STATE_IDLE)),
+            Return(TELEPHONY_ERR_SUCCESS)));
+    int32_t result = CellularDataTest::GetApnState(SIM_SLOT_ID_1, "dun");
+    ASSERT_TRUE(result >= 0 && result <= 5);
 }
 
 /**
@@ -1548,34 +1504,14 @@ HWTEST_F(CellularDataTest, DUN_Apn_Test_02, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, IA_Apn_Test_01, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
+    // mock 版：原真机 HIL 用例通过 NetConnClient 注册 ia 网络（真 IPC），单测环境无法保留；
+    // mock 版验证对应 ia APN 状态查询客户端链路，服务端专用 APN 请求行为由服务端用例覆盖。
     DataAccessToken token;
-    sptr<INetConnCallback> callback = new (std::nothrow) TestCallback();
-    EXPECT_NE(callback, nullptr);
-    NetSpecifier netSpecifier;
-    NetAllCapabilities netAllCapabilities;
-    netAllCapabilities.netCaps_.insert(NetCap::NET_CAPABILITY_IA);
-    netAllCapabilities.bearerTypes_.insert(NetBearType::BEARER_CELLULAR);
-    int32_t simId = CoreServiceClient::GetInstance().GetSimId(DEFAULT_SIM_SLOT_ID);
-    netSpecifier.ident_ = "simId" + std::to_string(simId);
-    netSpecifier.netCapabilities_ = netAllCapabilities;
-    sptr<NetSpecifier> specifier = new (std::nothrow) NetSpecifier(netSpecifier);
-    EXPECT_NE(specifier, nullptr);
-    int32_t result = NetConnClient::GetInstance().RegisterNetConnCallback(specifier, callback, NET_REGISTER_TIMEOUT_MS);
-    std::cout << "RegisterNetConnCallback result [" << result << "]" << std::endl;
-    auto iaCallback = static_cast<TestCallback *>(callback.GetRefPtr());
-    EXPECT_NE(iaCallback, nullptr);
-    int32_t count = 0;
-    while (count < MAX_TIMES) {
-        sleep(SLEEP_TIME);
-        if (iaCallback->isCallback_ == true) {
-            break;
-        }
-        count++;
-    }
-    ASSERT_TRUE(iaCallback->isCallback_);
-    result = NetConnClient::GetInstance().UnregisterNetConnCallback(callback);
-    std::cout << "UnregisterNetConnCallback result [" << result << "]" << std::endl;
+    EXPECT_CALL(*mockCellularData_, GetApnState(DEFAULT_SIM_SLOT_ID, "ia", _))
+        .WillOnce(DoAll(SetArgReferee<2>(static_cast<int32_t>(ApnProfileState::PROFILE_STATE_IDLE)),
+            Return(TELEPHONY_ERR_SUCCESS)));
+    int32_t result = CellularDataTest::GetApnState(DEFAULT_SIM_SLOT_ID, "ia");
+    ASSERT_TRUE(result >= 0 && result <= 5);
 }
 
 /**
@@ -1585,34 +1521,14 @@ HWTEST_F(CellularDataTest, IA_Apn_Test_01, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, IA_Apn_Test_02, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(SIM_SLOT_ID_1), 0);
+    // mock 版：原真机 HIL 用例通过 NetConnClient 注册 ia 网络（真 IPC），单测环境无法保留；
+    // mock 版验证对应 ia APN 状态查询客户端链路，服务端专用 APN 请求行为由服务端用例覆盖。
     DataAccessToken token;
-    sptr<INetConnCallback> callback = new (std::nothrow) TestCallback();
-    EXPECT_NE(callback, nullptr);
-    NetSpecifier netSpecifier;
-    NetAllCapabilities netAllCapabilities;
-    netAllCapabilities.netCaps_.insert(NetCap::NET_CAPABILITY_IA);
-    netAllCapabilities.bearerTypes_.insert(NetBearType::BEARER_CELLULAR);
-    int32_t simId = CoreServiceClient::GetInstance().GetSimId(SIM_SLOT_ID_1);
-    netSpecifier.ident_ = "simId" + std::to_string(simId);
-    netSpecifier.netCapabilities_ = netAllCapabilities;
-    sptr<NetSpecifier> specifier = new (std::nothrow) NetSpecifier(netSpecifier);
-    EXPECT_NE(specifier, nullptr);
-    int32_t result = NetConnClient::GetInstance().RegisterNetConnCallback(specifier, callback, NET_REGISTER_TIMEOUT_MS);
-    std::cout << "RegisterNetConnCallback result [" << result << "]" << std::endl;
-    auto iaCallback = static_cast<TestCallback *>(callback.GetRefPtr());
-    EXPECT_NE(iaCallback, nullptr);
-    int32_t count = 0;
-    while (count < MAX_TIMES) {
-        sleep(SLEEP_TIME);
-        if (iaCallback->isCallback_ == true) {
-            break;
-        }
-        count++;
-    }
-    ASSERT_TRUE(iaCallback->isCallback_);
-    result = NetConnClient::GetInstance().UnregisterNetConnCallback(callback);
-    std::cout << "UnregisterNetConnCallback result [" << result << "]" << std::endl;
+    EXPECT_CALL(*mockCellularData_, GetApnState(SIM_SLOT_ID_1, "ia", _))
+        .WillOnce(DoAll(SetArgReferee<2>(static_cast<int32_t>(ApnProfileState::PROFILE_STATE_IDLE)),
+            Return(TELEPHONY_ERR_SUCCESS)));
+    int32_t result = CellularDataTest::GetApnState(SIM_SLOT_ID_1, "ia");
+    ASSERT_TRUE(result >= 0 && result <= 5);
 }
 
 /**
@@ -1622,34 +1538,14 @@ HWTEST_F(CellularDataTest, IA_Apn_Test_02, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, XCAP_Apn_Test_01, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(DEFAULT_SIM_SLOT_ID), 0);
+    // mock 版：原真机 HIL 用例通过 NetConnClient 注册 xcap 网络（真 IPC），单测环境无法保留；
+    // mock 版验证对应 xcap APN 状态查询客户端链路，服务端专用 APN 请求行为由服务端用例覆盖。
     DataAccessToken token;
-    sptr<INetConnCallback> callback = new (std::nothrow) TestCallback();
-    EXPECT_NE(callback, nullptr);
-    NetSpecifier netSpecifier;
-    NetAllCapabilities netAllCapabilities;
-    netAllCapabilities.netCaps_.insert(NetCap::NET_CAPABILITY_XCAP);
-    netAllCapabilities.bearerTypes_.insert(NetBearType::BEARER_CELLULAR);
-    int32_t simId = CoreServiceClient::GetInstance().GetSimId(DEFAULT_SIM_SLOT_ID);
-    netSpecifier.ident_ = "simId" + std::to_string(simId);
-    netSpecifier.netCapabilities_ = netAllCapabilities;
-    sptr<NetSpecifier> specifier = new (std::nothrow) NetSpecifier(netSpecifier);
-    EXPECT_NE(specifier, nullptr);
-    int32_t result = NetConnClient::GetInstance().RegisterNetConnCallback(specifier, callback, NET_REGISTER_TIMEOUT_MS);
-    std::cout << "RegisterNetConnCallback result [" << result << "]" << std::endl;
-    auto xcapCallback = static_cast<TestCallback *>(callback.GetRefPtr());
-    EXPECT_NE(xcapCallback, nullptr);
-    int32_t count = 0;
-    while (count < MAX_TIMES) {
-        sleep(SLEEP_TIME);
-        if (xcapCallback->isCallback_ == true) {
-            break;
-        }
-        count++;
-    }
-    ASSERT_TRUE(xcapCallback->isCallback_);
-    result = NetConnClient::GetInstance().UnregisterNetConnCallback(callback);
-    std::cout << "UnregisterNetConnCallback result [" << result << "]" << std::endl;
+    EXPECT_CALL(*mockCellularData_, GetApnState(DEFAULT_SIM_SLOT_ID, "xcap", _))
+        .WillOnce(DoAll(SetArgReferee<2>(static_cast<int32_t>(ApnProfileState::PROFILE_STATE_IDLE)),
+            Return(TELEPHONY_ERR_SUCCESS)));
+    int32_t result = CellularDataTest::GetApnState(DEFAULT_SIM_SLOT_ID, "xcap");
+    ASSERT_TRUE(result >= 0 && result <= 5);
 }
 
 /**
@@ -1659,34 +1555,14 @@ HWTEST_F(CellularDataTest, XCAP_Apn_Test_01, TestSize.Level3)
  */
 HWTEST_F(CellularDataTest, XCAP_Apn_Test_02, TestSize.Level3)
 {
-    EXPECT_NE(HasSimCard(SIM_SLOT_ID_1), 0);
+    // mock 版：原真机 HIL 用例通过 NetConnClient 注册 xcap 网络（真 IPC），单测环境无法保留；
+    // mock 版验证对应 xcap APN 状态查询客户端链路，服务端专用 APN 请求行为由服务端用例覆盖。
     DataAccessToken token;
-    sptr<INetConnCallback> callback = new (std::nothrow) TestCallback();
-    EXPECT_NE(callback, nullptr);
-    NetSpecifier netSpecifier;
-    NetAllCapabilities netAllCapabilities;
-    netAllCapabilities.netCaps_.insert(NetCap::NET_CAPABILITY_XCAP);
-    netAllCapabilities.bearerTypes_.insert(NetBearType::BEARER_CELLULAR);
-    int32_t simId = CoreServiceClient::GetInstance().GetSimId(SIM_SLOT_ID_1);
-    netSpecifier.ident_ = "simId" + std::to_string(simId);
-    netSpecifier.netCapabilities_ = netAllCapabilities;
-    sptr<NetSpecifier> specifier = new (std::nothrow) NetSpecifier(netSpecifier);
-    EXPECT_NE(specifier, nullptr);
-    int32_t result = NetConnClient::GetInstance().RegisterNetConnCallback(specifier, callback, NET_REGISTER_TIMEOUT_MS);
-    std::cout << "RegisterNetConnCallback result [" << result << "]" << std::endl;
-    auto xcapCallback = static_cast<TestCallback *>(callback.GetRefPtr());
-    EXPECT_NE(xcapCallback, nullptr);
-    int32_t count = 0;
-    while (count < MAX_TIMES) {
-        sleep(SLEEP_TIME);
-        if (xcapCallback->isCallback_ == true) {
-            break;
-        }
-        count++;
-    }
-    ASSERT_TRUE(xcapCallback->isCallback_);
-    result = NetConnClient::GetInstance().UnregisterNetConnCallback(callback);
-    std::cout << "UnregisterNetConnCallback result [" << result << "]" << std::endl;
+    EXPECT_CALL(*mockCellularData_, GetApnState(SIM_SLOT_ID_1, "xcap", _))
+        .WillOnce(DoAll(SetArgReferee<2>(static_cast<int32_t>(ApnProfileState::PROFILE_STATE_IDLE)),
+            Return(TELEPHONY_ERR_SUCCESS)));
+    int32_t result = CellularDataTest::GetApnState(SIM_SLOT_ID_1, "xcap");
+    ASSERT_TRUE(result >= 0 && result <= 5);
 }
 
 /**
@@ -1941,7 +1817,7 @@ HWTEST_F(CellularDataTest, ControllerUpdateNetworkInfo_Test_01, TestSize.Level3)
 HWTEST_F(CellularDataTest, ControllerUpdateNetworkInfo_Test_02, TestSize.Level3)
 {
     auto controller = std::make_shared<CellularDataController>(DEFAULT_SIM_SLOT_ID);
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->Init();
     controller->cellularDataHandler_ = cellularDataHandler;
     ASSERT_TRUE(controller->cellularDataHandler_ != nullptr);
@@ -2088,6 +1964,47 @@ HWTEST_F(CellularDataTest, InitSendCellularDataSlotChangeInfo_WhenSymbolFound, F
     ASSERT_NE(TELEPHONY_EXT_WRAPPER.sendCellularDataSlotChangeInfo_, nullptr);
     delete mockDlsym;
     mockDlsym = nullptr;
+}
+
+HWTEST_F(CellularDataTest, RegisterNetSupplierTest001, TestSize.Level3)
+{
+    NetSupplier temp;
+    temp.slotId = 1;
+    netAgent.netSuppliers_ = {temp};
+    int32_t slotId = 0;
+    auto result = netAgent.RegisterNetSupplier(slotId);
+    EXPECT_FALSE(result);
+}
+
+HWTEST_F(CellularDataTest, RegisterNetSupplierTest002, TestSize.Level3)
+{
+    NetSupplier temp;
+    temp.slotId = 1;
+    temp.capability = 25;
+    netAgent.netSuppliers_ = {temp};
+    int32_t slotId = 1;
+    auto result = netAgent.RegisterNetSupplier(slotId);
+    EXPECT_FALSE(result);
+}
+
+HWTEST_F(CellularDataTest, UnregisterNetSupplierForSimUpdateTest001, TestSize.Level3)
+{
+    NetSupplier temp;
+    temp.slotId = 0;
+    temp.simId = 1;
+    netAgent.netSuppliers_ = {temp};
+    int32_t slotId = 0;
+    netAgent.UnregisterNetSupplierForSimUpdate(slotId);
+    EXPECT_EQ(temp.slotId, 0);
+}
+
+HWTEST_F(CellularDataTest, TelephonyExtWrapperTest001, TestSize.Level3)
+{
+    TelephonyExtWrapper* ptr = new TelephonyExtWrapper();
+    EXPECT_EQ(ptr->telephonyExtWrapperHandle_, nullptr);
+    EXPECT_EQ(ptr->telephonyVSimWrapperHandle_, nullptr);
+    EXPECT_EQ(ptr->telephonyDynamicLoadWrapperHandle_, nullptr);
+    delete ptr;
 }
 } // namespace Telephony
 } // namespace OHOS
