@@ -508,7 +508,7 @@ bool ApnManager::IsDataConnectionNotUsed(const std::shared_ptr<CellularDataState
     return true;
 }
 
-bool HasAnyConnectedStateInner() const
+bool ApnManager::HasAnyConnectedStateInner() const
 {
     for (const sptr<ApnHolder> &apnHolder : apnHolders_) {
         if (apnHolder == nullptr) {
