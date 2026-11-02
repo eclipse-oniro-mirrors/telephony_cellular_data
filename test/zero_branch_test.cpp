@@ -3219,6 +3219,41 @@ HWTEST_F(BranchTest, SetDataPermittedForMms_VSim_001, Function | MediumTest | Le
 #endif
 }
 
+/*
+ * 回归：incallDataStateMachine_ 指针生命周期与通话状态脱钩（通话结束仅 DeInit 清内部状态，
+ * 不清 handler 成员指针）。SetDataPermittedForMms 不得以"指针非空"判定通话中，
+ * 必须以状态机记录的实际通话状态（IDLE/DISCONNECTED 视为已结束）判定。
+ * 锚点说明：本产品未定义 OHOS_BUILD_ENABLE_TELEPHONY_EXT（VSim 分支不编译），
+ * 故用 slot3 + TSTS 开启的早退分支（该分支位于 incall 判决之后）作尾路径确定性锚点，
+ * 断言不依赖 EXT 宏。
+ */
+HWTEST_F(BranchTest, SetDataPermittedForMms_InCallState_001, Function | MediumTest | Level3)
+{
+    system::SetParameter(PERSIST_TSTS_MODE, "1");
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(CELLDATA_SLOT_ID_3);
+    cellularDataHandler->Init();
+    // 模拟首次 IMS 呼叫创建通话中数据状态机：通话进行中（DIALING）仍需拦截
+    cellularDataHandler->incallDataStateMachine_ =
+        cellularDataHandler->CreateIncallDataStateMachine(TelCallStatus::CALL_STATUS_DIALING);
+    ASSERT_NE(cellularDataHandler->incallDataStateMachine_, nullptr);
+    ASSERT_FALSE(cellularDataHandler->SetDataPermittedForMms(true));
+    // 通话结束后指针残留（DeInit 不清指针），不得再被 incall 分支拦截，应落到 TSTS 分支返回 true
+    cellularDataHandler->incallDataStateMachine_->UpdateCallState(TelCallStatus::CALL_STATUS_IDLE);
+    ASSERT_TRUE(cellularDataHandler->SetDataPermittedForMms(true));
+    cellularDataHandler->incallDataStateMachine_->UpdateCallState(TelCallStatus::CALL_STATUS_DISCONNECTED);
+    ASSERT_TRUE(cellularDataHandler->SetDataPermittedForMms(false));
+    // 通话状态再次激活（ACTIVE/DIALING），拦截恢复生效
+    cellularDataHandler->incallDataStateMachine_->UpdateCallState(TelCallStatus::CALL_STATUS_ACTIVE);
+    ASSERT_FALSE(cellularDataHandler->SetDataPermittedForMms(true));
+    cellularDataHandler->incallDataStateMachine_->UpdateCallState(TelCallStatus::CALL_STATUS_DIALING);
+    ASSERT_FALSE(cellularDataHandler->SetDataPermittedForMms(true));
+    // 排空并释放通话中数据状态机，规避 FFRT 队列析构竞态
+    TestAsyncUtils::DrainStateMachine(cellularDataHandler->incallDataStateMachine_.get());
+    cellularDataHandler->incallDataStateMachine_ = nullptr;
+    system::SetParameter(PERSIST_TSTS_MODE, "0");
+}
+
+
 bool MockIsVirtualModemSlot(int32_t slotId)
 {
     return true;
