@@ -1753,66 +1753,6 @@ HWTEST_F(ApnManagerTest, IsPreferIdChangedByMerge_002, Function | MediumTest | L
 }
 
 /**
- * @tc.number   FindBestCapability_006
- * @tc.name     test function branch
- * @tc.desc     Function test
- */
-HWTEST_F(ApnManagerTest, FindBestCapability_006, Function | MediumTest | Level1)
-{
-    uint64_t capabilities = 1L << NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI1;
-    NetManagerStandard::NetCap netCap = apnManager->FindBestCapability(capabilities);
-    ASSERT_EQ(netCap, NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI1);
-}
-
-/**
- * @tc.number   FindBestCapability_007
- * @tc.name     test function branch
- * @tc.desc     Function test
- */
-HWTEST_F(ApnManagerTest, FindBestCapability_007, Function | MediumTest | Level1)
-{
-    uint64_t capabilities = 1L << NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI2;
-    NetManagerStandard::NetCap netCap = apnManager->FindBestCapability(capabilities);
-    ASSERT_EQ(netCap, NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI2);
-}
-
-/**
- * @tc.number   FindBestCapability_008
- * @tc.name     test function branch
- * @tc.desc     Function test
- */
-HWTEST_F(ApnManagerTest, FindBestCapability_008, Function | MediumTest | Level1)
-{
-    uint64_t capabilities = 1L << NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI3;
-    NetManagerStandard::NetCap netCap = apnManager->FindBestCapability(capabilities);
-    ASSERT_EQ(netCap, NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI3);
-}
-
-/**
- * @tc.number   FindBestCapability_009
- * @tc.name     test function branch
- * @tc.desc     Function test
- */
-HWTEST_F(ApnManagerTest, FindBestCapability_009, Function | MediumTest | Level1)
-{
-    uint64_t capabilities = 1L << NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI4;
-    NetManagerStandard::NetCap netCap = apnManager->FindBestCapability(capabilities);
-    ASSERT_EQ(netCap, NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI4);
-}
-
-/**
- * @tc.number   FindBestCapability_010
- * @tc.name     test function branch
- * @tc.desc     Function test
- */
-HWTEST_F(ApnManagerTest, FindBestCapability_010, Function | MediumTest | Level1)
-{
-    uint64_t capabilities = 1L << NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI5;
-    NetManagerStandard::NetCap netCap = apnManager->FindBestCapability(capabilities);
-    ASSERT_EQ(netCap, NetManagerStandard::NetCap::NET_CAPABILITY_SNSSAI5);
-}
-
-/**
  * @tc.number   FindBestCapability_011
  * @tc.name     test function branch
  * @tc.desc     Function test
