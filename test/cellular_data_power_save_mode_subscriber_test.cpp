@@ -21,6 +21,7 @@
 #include "common_event_support.h"
 #include "telephony_types.h"
 #include "cellular_data_handler.h"
+#include "utils/test_async_utils.h"
 
 namespace OHOS {
 namespace Telephony {
@@ -36,7 +37,7 @@ public:
 HWTEST_F(CellularDataPowerSaveModeSubscriberTest, CellularDataPowerSaveModeSubscriber_01,
          Function | MediumTest | Level1)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->SubscribeTelePowerEvent();
     std::string action = ENTER_STR_TELEPHONY_NOTIFY;
     auto subscriber = cellularDataHandler->strEnterSubscriber_;
@@ -48,7 +49,7 @@ HWTEST_F(CellularDataPowerSaveModeSubscriberTest, CellularDataPowerSaveModeSubsc
 HWTEST_F(CellularDataPowerSaveModeSubscriberTest, CellularDataPowerSaveModeSubscriber_02,
          Function | MediumTest | Level1)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->SubscribeTelePowerEvent();
     auto want = EventFwk::Want();
     want.SetAction(ENTER_STR_TELEPHONY_NOTIFY);
@@ -60,7 +61,7 @@ HWTEST_F(CellularDataPowerSaveModeSubscriberTest, CellularDataPowerSaveModeSubsc
 HWTEST_F(CellularDataPowerSaveModeSubscriberTest, CellularDataPowerSaveModeSubscriber_03,
          Function | MediumTest | Level1)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->SubscribeTelePowerEvent();
     auto want = EventFwk::Want();
     want.SetAction(EXIT_STR_TELEPHONY_NOTIFY);
@@ -73,7 +74,7 @@ HWTEST_F(CellularDataPowerSaveModeSubscriberTest, CellularDataPowerSaveModeSubsc
 HWTEST_F(CellularDataPowerSaveModeSubscriberTest, CellularDataPowerSaveModeSubscriber_04,
          Function | MediumTest | Level1)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->SubscribeTelePowerEvent();
     auto want = EventFwk::Want();
     want.SetAction(ENTER_STR_TELEPHONY_NOTIFY);
@@ -86,7 +87,7 @@ HWTEST_F(CellularDataPowerSaveModeSubscriberTest, CellularDataPowerSaveModeSubsc
 HWTEST_F(CellularDataPowerSaveModeSubscriberTest, CellularDataPowerSaveModeSubscriber_05,
          Function | MediumTest | Level1)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->SubscribeTelePowerEvent();
     auto want = EventFwk::Want();
     want.SetAction(EXIT_STR_TELEPHONY_NOTIFY);
@@ -100,7 +101,7 @@ HWTEST_F(CellularDataPowerSaveModeSubscriberTest, CellularDataPowerSaveModeSubsc
 HWTEST_F(CellularDataPowerSaveModeSubscriberTest, CellularDataPowerSaveModeSubscriber_06,
          Function | MediumTest | Level1)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->SubscribeTelePowerEvent();
     int32_t resultCode = 1;
     std::string resultData = "aa";
@@ -117,7 +118,7 @@ HWTEST_F(CellularDataPowerSaveModeSubscriberTest, CellularDataPowerSaveModeSubsc
 HWTEST_F(CellularDataPowerSaveModeSubscriberTest, CellularDataPowerSaveModeSubscriber_07,
          Function | MediumTest | Level1)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->SubscribeTelePowerEvent();
     cellularDataHandler->strEnterSubscriber_->strAsyncCommonEvent_ = nullptr;
     bool ret = cellularDataHandler->strEnterSubscriber_->FinishTelePowerCommonEvent();
@@ -127,7 +128,7 @@ HWTEST_F(CellularDataPowerSaveModeSubscriberTest, CellularDataPowerSaveModeSubsc
 HWTEST_F(CellularDataPowerSaveModeSubscriberTest, CellularDataPowerSaveModeSubscriber_08,
          Function | MediumTest | Level1)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->SubscribeTelePowerEvent();
     std::string action = EXIT_STR_TELEPHONY_NOTIFY;
     auto subscriber = cellularDataHandler->strExitSubscriber_;
@@ -139,7 +140,7 @@ HWTEST_F(CellularDataPowerSaveModeSubscriberTest, CellularDataPowerSaveModeSubsc
 HWTEST_F(CellularDataPowerSaveModeSubscriberTest, CellularDataPowerSaveModeSubscriber_09,
          Function | MediumTest | Level1)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->SubscribeTelePowerEvent();
     auto want = EventFwk::Want();
     want.SetAction(DYNAMIC_POWEROFF_MODEM_WITH_STR);

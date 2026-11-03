@@ -20,6 +20,7 @@
 #include "common_event_support.h"
 #include "cellular_data_handler.h"
 #include "cellular_data_controller.h"
+#include "utils/test_async_utils.h"
 #ifdef BASE_POWER_IMPROVEMENT
 #include "cellular_data_power_save_mode_subscriber.h"
 #endif
@@ -43,7 +44,7 @@ public:
  */
 HWTEST_F(CellularDataHandlerTest, HandleUpdateNetInfo_001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     auto netInfo = std::make_shared<SetupDataCallResultInfo>();
     auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_DATA_CALL_LIST_CHANGED, netInfo);
     cellularDataHandler->HandleUpdateNetInfo(event);
@@ -58,7 +59,7 @@ HWTEST_F(CellularDataHandlerTest, HandleUpdateNetInfo_001, Function | MediumTest
  */
 HWTEST_F(CellularDataHandlerTest, HandleUpdateNetInfo_002, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->Init();
     auto netInfo = std::make_shared<SetupDataCallResultInfo>();
     auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_DATA_CALL_LIST_CHANGED);
@@ -75,7 +76,7 @@ HWTEST_F(CellularDataHandlerTest, HandleUpdateNetInfo_002, Function | MediumTest
  */
 HWTEST_F(CellularDataHandlerTest, HandleUpdateNetInfo_003, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->Init();
     auto netInfo = std::make_shared<SetupDataCallResultInfo>();
     netInfo->flag = DATA_CONTEXT_ROLE_DEFAULT_ID;
@@ -97,7 +98,7 @@ HWTEST_F(CellularDataHandlerTest, HandleUpdateNetInfo_003, Function | MediumTest
  */
 HWTEST_F(CellularDataHandlerTest, HandleUpdateNetInfo_004, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->Init();
     auto netInfo = std::make_shared<SetupDataCallResultInfo>();
     netInfo->flag = DATA_CONTEXT_ROLE_DEFAULT_ID;
@@ -122,7 +123,7 @@ HWTEST_F(CellularDataHandlerTest, HandleUpdateNetInfo_004, Function | MediumTest
  */
 HWTEST_F(CellularDataHandlerTest, HandleUpdateNetInfo_005, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->Init();
     auto netInfo = std::make_shared<SetupDataCallResultInfo>();
     netInfo->flag = DATA_CONTEXT_ROLE_DEFAULT_ID;
@@ -131,7 +132,7 @@ HWTEST_F(CellularDataHandlerTest, HandleUpdateNetInfo_005, Function | MediumTest
         cellularDataHandler->apnManager_->FindApnNameByApnId(netInfo->flag));
     EXPECT_NE(apnHolder, nullptr);
     apnHolder->SetApnState(PROFILE_STATE_CONNECTED);
-    auto connectionManager = std::make_shared<DataConnectionManager>(0);
+    auto connectionManager = TestAsyncUtils::MakeDrainedStateMachine<DataConnectionManager>(0);
     EXPECT_NE(connectionManager, nullptr);
     connectionManager->Init();
     auto sm = std::make_shared<CellularDataStateMachine>(
@@ -155,7 +156,7 @@ HWTEST_F(CellularDataHandlerTest, HandleUpdateNetInfo_005, Function | MediumTest
  */
 HWTEST_F(CellularDataHandlerTest, HandleUpdateNetInfo_006, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->Init();
     auto netInfo = std::make_shared<SetupDataCallResultInfo>();
     netInfo->flag = DATA_CONTEXT_ROLE_DEFAULT_ID;
@@ -175,7 +176,7 @@ HWTEST_F(CellularDataHandlerTest, HandleUpdateNetInfo_006, Function | MediumTest
  */
 HWTEST_F(CellularDataHandlerTest, HandleRoamingOff_001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     EXPECT_NE(cellularDataHandler, nullptr);
     cellularDataHandler->Init();
     cellularDataHandler->SetCellularDataRoamingEnabled(true);
@@ -190,7 +191,7 @@ HWTEST_F(CellularDataHandlerTest, HandleRoamingOff_001, Function | MediumTest | 
  */
 HWTEST_F(CellularDataHandlerTest, HandleRoamingOff_002, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     EXPECT_NE(cellularDataHandler, nullptr);
     cellularDataHandler->Init();
     cellularDataHandler->SetCellularDataRoamingEnabled(false);
@@ -205,7 +206,7 @@ HWTEST_F(CellularDataHandlerTest, HandleRoamingOff_002, Function | MediumTest | 
  */
 HWTEST_F(CellularDataHandlerTest, HandleEstablishAllApnsIfConnectable_001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->Init();
     AppExecFwk::InnerEvent::Pointer msgEvent =
         AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_ESTABLISH_ALL_APNS_IF_CONNECTABLE);
@@ -220,7 +221,7 @@ HWTEST_F(CellularDataHandlerTest, HandleEstablishAllApnsIfConnectable_001, Funct
  */
 HWTEST_F(CellularDataHandlerTest, HandleSimEvent_001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->Init();
     AppExecFwk::InnerEvent::Pointer nullEvent(nullptr, nullptr);
     cellularDataHandler->HandleSimEvent(nullEvent);
@@ -237,7 +238,7 @@ HWTEST_F(CellularDataHandlerTest, HandleSimEvent_001, Function | MediumTest | Le
  */
 HWTEST_F(CellularDataHandlerTest, HandleSimEvent_002, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->Init();
     auto event = AppExecFwk::InnerEvent::Get(RadioEvent::RADIO_SIM_STATE_CHANGE, 1);
     cellularDataHandler->HandleSimEvent(event);
@@ -251,7 +252,7 @@ HWTEST_F(CellularDataHandlerTest, HandleSimEvent_002, Function | MediumTest | Le
  */
 HWTEST_F(CellularDataHandlerTest, HandleSimEvent_003, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->Init();
     auto event = AppExecFwk::InnerEvent::Get(RadioEvent::RADIO_SIM_STATE_CHANGE, 0);
     cellularDataHandler->HandleSimEvent(event);
@@ -265,7 +266,7 @@ HWTEST_F(CellularDataHandlerTest, HandleSimEvent_003, Function | MediumTest | Le
  */
 HWTEST_F(CellularDataHandlerTest, HandleSimEvent_004, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->Init();
     auto event = AppExecFwk::InnerEvent::Get(RadioEvent::RADIO_SIM_RECORDS_LOADED, 0);
     cellularDataHandler->HandleSimEvent(event);
@@ -279,7 +280,7 @@ HWTEST_F(CellularDataHandlerTest, HandleSimEvent_004, Function | MediumTest | Le
  */
 HWTEST_F(CellularDataHandlerTest, HandleSimEvent_005, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->Init();
     auto event = AppExecFwk::InnerEvent::Get(RadioEvent::RADIO_NV_REFRESH_FINISHED, 0);
     cellularDataHandler->HandleSimEvent(event);
@@ -293,7 +294,7 @@ HWTEST_F(CellularDataHandlerTest, HandleSimEvent_005, Function | MediumTest | Le
  */
 HWTEST_F(CellularDataHandlerTest, HandleSimEvent_006, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->Init();
     auto event = AppExecFwk::InnerEvent::Get(RadioEvent::RADIO_SIM_ACCOUNT_LOADED, 0);
     cellularDataHandler->HandleSimEvent(event);
@@ -307,7 +308,7 @@ HWTEST_F(CellularDataHandlerTest, HandleSimEvent_006, Function | MediumTest | Le
  */
 HWTEST_F(CellularDataHandlerTest, HandleSimEvent_007, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->Init();
     auto event = AppExecFwk::InnerEvent::Get(RadioEvent::RADIO_NV_REFRESH_FINISHED, 0);
     cellularDataHandler->HandleSimEvent(event);
@@ -321,7 +322,7 @@ HWTEST_F(CellularDataHandlerTest, HandleSimEvent_007, Function | MediumTest | Le
  */
 HWTEST_F(CellularDataHandlerTest, HandleSimEvent_008, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->Init();
     auto event = AppExecFwk::InnerEvent::Get(RadioEvent::RADIO_NV_REFRESH_FINISHED, 1);
     cellularDataHandler->HandleSimEvent(event);
@@ -335,7 +336,7 @@ HWTEST_F(CellularDataHandlerTest, HandleSimEvent_008, Function | MediumTest | Le
  */
 HWTEST_F(CellularDataHandlerTest, ClearConnectionsOnUpdateApns_001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->ClearConnectionsOnUpdateApns(DisConnectionReason::REASON_RETRY_CONNECTION);
     EXPECT_EQ(cellularDataHandler->apnManager_, nullptr);
 }
@@ -347,7 +348,7 @@ HWTEST_F(CellularDataHandlerTest, ClearConnectionsOnUpdateApns_001, Function | M
  */
 HWTEST_F(CellularDataHandlerTest, ClearConnectionsOnUpdateApns_002, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->Init();
     cellularDataHandler->ClearConnectionsOnUpdateApns(DisConnectionReason::REASON_RETRY_CONNECTION);
     EXPECT_NE(cellularDataHandler->connectionManager_, nullptr);
@@ -371,7 +372,7 @@ HWTEST_F(CellularDataHandlerTest, ClearConnectionsOnUpdateApns_002, Function | M
  */
 HWTEST_F(CellularDataHandlerTest, SetCellularDataRoamingEnabledTest001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     bool dataRoamingEnabled = true;
     EXPECT_EQ(cellularDataHandler->SetCellularDataRoamingEnabled(dataRoamingEnabled), TELEPHONY_ERR_LOCAL_PTR_NULL);
     cellularDataHandler->Init();
@@ -392,7 +393,7 @@ HWTEST_F(CellularDataHandlerTest, SetCellularDataRoamingEnabledTest001, Function
  */
 HWTEST_F(CellularDataHandlerTest, AttemptEstablishDataConnectionTest001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(1);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(1);
     cellularDataHandler->Init();
     std::shared_ptr<CellularDataStateMachine> cellularMachine = nullptr;
     cellularDataHandler->connectionManager_->GetAllConnectionMachine().push_back(cellularMachine);
@@ -406,8 +407,8 @@ HWTEST_F(CellularDataHandlerTest, AttemptEstablishDataConnectionTest001, Functio
  */
 HWTEST_F(CellularDataHandlerTest, AttemptEstablishDataConnectionTest002, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(1);
-    auto connectionManager = std::make_shared<DataConnectionManager>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(1);
+    auto connectionManager = TestAsyncUtils::MakeDrainedStateMachine<DataConnectionManager>(0);
     std::shared_ptr<CellularDataStateMachine> cellularMachine = std::make_shared<CellularDataStateMachine>(
         connectionManager, nullptr);
     cellularDataHandler->connectionManager_ = connectionManager;
@@ -444,7 +445,7 @@ HWTEST_F(CellularDataHandlerTest, EstablishDataConnectionTest002, Function | Med
  */
 HWTEST_F(CellularDataHandlerTest, DisconnectDataCompleteTest001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->Init();
     auto event = AppExecFwk::InnerEvent::Get(0);
     cellularDataHandler->DisconnectDataComplete(event);
@@ -460,7 +461,7 @@ HWTEST_F(CellularDataHandlerTest, DisconnectDataCompleteTest001, Function | Medi
  */
 HWTEST_F(CellularDataHandlerTest, UpdatePhysicalConnectionStateTest001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->physicalConnectionActiveState_ = false;
     cellularDataHandler->UpdatePhysicalConnectionState(false);
     EXPECT_TRUE(cellularDataHandler->physicalConnectionActiveState_);
@@ -483,7 +484,7 @@ HWTEST_F(CellularDataHandlerTest, UpdatePhysicalConnectionStateTest001, Function
  */
 HWTEST_F(CellularDataHandlerTest, HandleScreenStateChangedTest001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->HandleScreenStateChanged(false);
     EXPECT_EQ(cellularDataHandler->connectionManager_, nullptr);
     cellularDataHandler->Init();
@@ -517,7 +518,7 @@ HWTEST_F(CellularDataHandlerTest, UpdateCellularDataConnectStateTest001, Functio
  */
 HWTEST_F(CellularDataHandlerTest, HandleImsCallChangedTest001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->Init();
     cellularDataHandler->HandleImsCallChanged(1);
     EXPECT_EQ(cellularDataHandler->incallDataStateMachine_, nullptr);
@@ -540,7 +541,7 @@ HWTEST_F(CellularDataHandlerTest, HandleImsCallChangedTest001, Function | Medium
  */
 HWTEST_F(CellularDataHandlerTest, PsDataRatChangedTest001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(1);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(1);
     cellularDataHandler->Init();
     AppExecFwk::InnerEvent::Pointer event(nullptr, nullptr);
     cellularDataHandler->PsDataRatChanged(event);
@@ -555,7 +556,7 @@ HWTEST_F(CellularDataHandlerTest, PsDataRatChangedTest001, Function | MediumTest
  */
 HWTEST_F(CellularDataHandlerTest, SetPolicyDataOnTest001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(1);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(1);
     cellularDataHandler->Init();
     cellularDataHandler->dataSwitchSettings_->policyDataOn_ = false;
     cellularDataHandler->SetPolicyDataOn(true);
@@ -572,7 +573,7 @@ HWTEST_F(CellularDataHandlerTest, SetPolicyDataOnTest001, Function | MediumTest 
  */
 HWTEST_F(CellularDataHandlerTest, SetRilAttachApnTest001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(1);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(1);
     cellularDataHandler->Init();
     EXPECT_NE(cellularDataHandler->apnManager_, nullptr);
     sptr<ApnItem> attachApn = ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_DEFAULT);
@@ -587,7 +588,7 @@ HWTEST_F(CellularDataHandlerTest, SetRilAttachApnTest001, Function | MediumTest 
  */
 HWTEST_F(CellularDataHandlerTest, HasAnyHigherPriorityConnectionTest001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(1);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(1);
     cellularDataHandler->Init();
     sptr<ApnHolder> sortApnHolder = std::make_unique<ApnHolder>("default", static_cast<int32_t>(0)).release();
     sortApnHolder->priority_ = 1;
@@ -608,7 +609,7 @@ HWTEST_F(CellularDataHandlerTest, HasAnyHigherPriorityConnectionTest001, Functio
  */
 HWTEST_F(CellularDataHandlerTest, HasAnyHigherPriorityConnectionTest002, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(1);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(1);
     cellularDataHandler->Init();
     sptr<ApnHolder> sortApnHolder = std::make_unique<ApnHolder>("default", static_cast<int32_t>(0)).release();
     sortApnHolder->priority_ = 1;
@@ -629,7 +630,7 @@ HWTEST_F(CellularDataHandlerTest, HasAnyHigherPriorityConnectionTest002, Functio
  */
 HWTEST_F(CellularDataHandlerTest, HasAnyHigherPriorityConnectionTest003, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(1);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(1);
     cellularDataHandler->Init();
     sptr<ApnHolder> sortApnHolder = std::make_unique<ApnHolder>("default", static_cast<int32_t>(0)).release();
     sortApnHolder->priority_ = 1;
@@ -650,9 +651,9 @@ HWTEST_F(CellularDataHandlerTest, HasAnyHigherPriorityConnectionTest003, Functio
  */
 HWTEST_F(CellularDataHandlerTest, HasInternetCapabilityTest001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(1);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(1);
     cellularDataHandler->Init();
-    auto connectionManager = std::make_shared<DataConnectionManager>(0);
+    auto connectionManager = TestAsyncUtils::MakeDrainedStateMachine<DataConnectionManager>(0);
     std::shared_ptr<CellularDataStateMachine> cellularMachine = std::make_shared<CellularDataStateMachine>(
         connectionManager, nullptr);
     cellularMachine->capability_ = NetCap::NET_CAPABILITY_INTERNET;
@@ -668,9 +669,9 @@ HWTEST_F(CellularDataHandlerTest, HasInternetCapabilityTest001, Function | Mediu
  */
 HWTEST_F(CellularDataHandlerTest, HasInternetCapabilityTest002, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(1);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(1);
     cellularDataHandler->Init();
-    auto connectionManager = std::make_shared<DataConnectionManager>(0);
+    auto connectionManager = TestAsyncUtils::MakeDrainedStateMachine<DataConnectionManager>(0);
     std::shared_ptr<CellularDataStateMachine> cellularMachine = std::make_shared<CellularDataStateMachine>(
         connectionManager, nullptr);
     cellularMachine->capability_ = NetCap::NET_CAPABILITY_MMS;
@@ -686,7 +687,7 @@ HWTEST_F(CellularDataHandlerTest, HasInternetCapabilityTest002, Function | Mediu
  */
 HWTEST_F(CellularDataHandlerTest, ChangeConnectionForDsdsTest001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(1);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(1);
     cellularDataHandler->Init();
     cellularDataHandler->ChangeConnectionForDsds(true);
     EXPECT_TRUE(cellularDataHandler->dataSwitchSettings_->internalDataOn_);
@@ -699,7 +700,7 @@ HWTEST_F(CellularDataHandlerTest, ChangeConnectionForDsdsTest001, Function | Med
  */
 HWTEST_F(CellularDataHandlerTest, GetDataConnApnAttrTest001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(1);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(1);
     cellularDataHandler->Init();
     sptr<ApnHolder> apnHolder1 = std::make_unique<ApnHolder>("default", static_cast<int32_t>(0)).release();
     apnHolder1->apnItem_ = nullptr;
@@ -724,14 +725,14 @@ HWTEST_F(CellularDataHandlerTest, GetDataConnApnAttrTest001, Function | MediumTe
  */
 HWTEST_F(CellularDataHandlerTest, GetDataConnIpTypeTest001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(1);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(1);
     cellularDataHandler->Init();
     sptr<ApnHolder> apnHolder1 = std::make_unique<ApnHolder>("default", static_cast<int32_t>(0)).release();
     apnHolder1->cellularDataStateMachine_ = nullptr;
     apnHolder1->dataCallEnabled_ = true;
     cellularDataHandler->apnManager_->apnHolders_.push_back(apnHolder1);
     sptr<ApnHolder> apnHolder2 = std::make_unique<ApnHolder>("default", static_cast<int32_t>(0)).release();
-    auto connectionManager = std::make_shared<DataConnectionManager>(0);
+    auto connectionManager = TestAsyncUtils::MakeDrainedStateMachine<DataConnectionManager>(0);
     std::shared_ptr<CellularDataStateMachine> cellularMachine = std::make_shared<CellularDataStateMachine>(
         connectionManager, nullptr);
     cellularMachine->ipType_ = "IPV4";
@@ -749,7 +750,7 @@ HWTEST_F(CellularDataHandlerTest, GetDataConnIpTypeTest001, Function | MediumTes
  */
 HWTEST_F(CellularDataHandlerTest, CheckForCompatibleDataConnectionTest001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(1);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(1);
     sptr<ApnHolder> apnHolder = std::make_unique<ApnHolder>("default", static_cast<int32_t>(0)).release();
     apnHolder->apnType_ = DATA_CONTEXT_ROLE_DUN;
     EXPECT_EQ(cellularDataHandler->CheckForCompatibleDataConnection(apnHolder), nullptr);
@@ -764,7 +765,7 @@ HWTEST_F(CellularDataHandlerTest, CheckForCompatibleDataConnectionTest001, Funct
  */
 HWTEST_F(CellularDataHandlerTest, UpdateNetworkInfo_001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     EXPECT_EQ(cellularDataHandler->connectionManager_, nullptr);
     EXPECT_FALSE(cellularDataHandler->UpdateNetworkInfo());
 }
@@ -776,7 +777,7 @@ HWTEST_F(CellularDataHandlerTest, UpdateNetworkInfo_001, Function | MediumTest |
  */
 HWTEST_F(CellularDataHandlerTest, UpdateNetworkInfo_002, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->Init();
     EXPECT_NE(cellularDataHandler->connectionManager_, nullptr);
     EXPECT_TRUE(cellularDataHandler->UpdateNetworkInfo());
@@ -789,7 +790,7 @@ HWTEST_F(CellularDataHandlerTest, UpdateNetworkInfo_002, Function | MediumTest |
  */
 HWTEST_F(CellularDataHandlerTest, Telephony_MsgRequest, Function | MediumTest | Level1)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->Init();
     NetRequest request1;
     request1.capability = NetManagerStandard::NET_CAPABILITY_INTERNET;
@@ -808,7 +809,7 @@ HWTEST_F(CellularDataHandlerTest, Telephony_MsgRequest, Function | MediumTest | 
  */
 HWTEST_F(CellularDataHandlerTest, Telephony_ConnectIfNeed, Function | MediumTest | Level1)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->Init();
 
     NetRequest request1;
@@ -835,7 +836,7 @@ HWTEST_F(CellularDataHandlerTest, Telephony_CellularDataHandler_003, Function | 
 HWTEST_F(CellularDataHandlerTest, DataConnCompleteUpdateStateTest001, Function | MediumTest | Level1)
 {
     int32_t slotId = 0;
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(slotId);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(slotId);
     std::string apnType = DATA_CONTEXT_ROLE_MMS;
     sptr<ApnHolder> apnHolder = new ApnHolder(apnType, slotId);
     apnHolder->cellularDataStateMachine_ = nullptr;
@@ -854,7 +855,7 @@ HWTEST_F(CellularDataHandlerTest, DataConnCompleteUpdateStateTest001, Function |
     apnHolder->cellularDataStateMachine_->netSupplierInfo_ = nullptr;
     cellularDataHandler->apnManager_ = std::make_unique<ApnManager>().release();
     cellularDataHandler->apnManager_->allApnItem_.clear();
-    cellularDataHandler->connectionManager_ = std::make_shared<DataConnectionManager>(slotId);
+    cellularDataHandler->connectionManager_ = TestAsyncUtils::MakeDrainedStateMachine<DataConnectionManager>(slotId);
     cellularDataHandler->physicalConnectionActiveState_ = false;
     cellularDataHandler->incallDataStateMachine_ =
         cellularDataHandler->CreateIncallDataStateMachine(TelCallStatus::CALL_STATUS_DIALING);
@@ -876,7 +877,7 @@ HWTEST_F(CellularDataHandlerTest, DataConnCompleteUpdateStateTest001, Function |
 HWTEST_F(CellularDataHandlerTest, CreateApnItemTest001, Function | MediumTest | Level1)
 {
     int32_t slotId = 0;
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(slotId);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(slotId);
     cellularDataHandler->apnManager_ = nullptr;
     cellularDataHandler->CreateApnItem();
 
@@ -891,7 +892,7 @@ HWTEST_F(CellularDataHandlerTest, CreateApnItemTest001, Function | MediumTest | 
 HWTEST_F(CellularDataHandlerTest, CreateApnItemTest002, Function | MediumTest | Level1)
 {
     int32_t slotId = 2;
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(slotId);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(slotId);
  
     cellularDataHandler->Init();
     cellularDataHandler->retryCreateApnTimes_ = 3;
@@ -910,7 +911,7 @@ HWTEST_F(CellularDataHandlerTest, CreateApnItemTest002, Function | MediumTest | 
 HWTEST_F(CellularDataHandlerTest, IsCellularDataEnabledTest001, Function | MediumTest | Level1)
 {
     int32_t slotId = 0;
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(slotId);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(slotId);
     bool isDataEnabled = false;
     EXPECT_NE(cellularDataHandler->IsCellularDataEnabled(isDataEnabled), TELEPHONY_ERR_SUCCESS);
 
@@ -929,7 +930,7 @@ HWTEST_F(CellularDataHandlerTest, IsCellularDataEnabledTest001, Function | Mediu
 HWTEST_F(CellularDataHandlerTest, CheckApnActivate001, Function | MediumTest | Level1)
 {
     int32_t slotId = 0;
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(slotId);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(slotId);
     cellularDataHandler->Init();
     cellularDataHandler->SetApnActivateStart(DATA_CONTEXT_ROLE_DEFAULT);
     cellularDataHandler->SetApnActivateStart(DATA_CONTEXT_ROLE_INTERNAL_DEFAULT);
@@ -963,7 +964,7 @@ HWTEST_F(CellularDataHandlerTest, CheckApnActivate001, Function | MediumTest | L
 HWTEST_F(CellularDataHandlerTest, CheckApnActivate002, Function | MediumTest | Level1)
 {
     int32_t slotId = 0;
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(slotId);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(slotId);
     cellularDataHandler->Init();
     ApnActivateInfo info1;
     info1.reason = 0;
@@ -983,7 +984,7 @@ HWTEST_F(CellularDataHandlerTest, CheckApnActivate002, Function | MediumTest | L
 HWTEST_F(CellularDataHandlerTest, CheckMultiApnState001, Function | MediumTest | Level1)
 {
     int32_t slotId = 0;
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(slotId);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(slotId);
     cellularDataHandler->Init();
     sptr<ApnManager> apnManager = cellularDataHandler->apnManager_;
     if (apnManager == nullptr) {
@@ -1006,7 +1007,7 @@ HWTEST_F(CellularDataHandlerTest, CheckMultiApnState001, Function | MediumTest |
 HWTEST_F(CellularDataHandlerTest, CheckMultiApnState002, Function | MediumTest | Level1)
 {
     int32_t slotId = 0;
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(slotId);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(slotId);
     cellularDataHandler->Init();
     sptr<ApnManager> apnManager = cellularDataHandler->apnManager_;
     if (apnManager == nullptr) {
@@ -1040,7 +1041,7 @@ HWTEST_F(CellularDataHandlerTest, CheckMultiApnState002, Function | MediumTest |
 HWTEST_F(CellularDataHandlerTest, CheckMultiApnState003, Function | MediumTest | Level1)
 {
     int32_t slotId = 0;
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(slotId);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(slotId);
     cellularDataHandler->Init();
     sptr<ApnManager> apnManager = cellularDataHandler->apnManager_;
     if (apnManager == nullptr) {
@@ -1061,7 +1062,7 @@ HWTEST_F(CellularDataHandlerTest, CheckMultiApnState003, Function | MediumTest |
 HWTEST_F(CellularDataHandlerTest, CheckMultiApnState004, Function | MediumTest | Level1)
 {
     int32_t slotId = 0;
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(slotId);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(slotId);
     cellularDataHandler->Init();
     sptr<ApnManager> apnManager = cellularDataHandler->apnManager_;
     if (apnManager == nullptr) {
@@ -1084,7 +1085,7 @@ HWTEST_F(CellularDataHandlerTest, CheckMultiApnState004, Function | MediumTest |
 HWTEST_F(CellularDataHandlerTest, CheckMultiApnState005, Function | MediumTest | Level1)
 {
     int32_t slotId = 0;
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(slotId);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(slotId);
     cellularDataHandler->Init();
     sptr<ApnManager> apnManager = cellularDataHandler->apnManager_;
     if (apnManager == nullptr) {
@@ -1112,7 +1113,7 @@ HWTEST_F(CellularDataHandlerTest, CheckMultiApnState005, Function | MediumTest |
 
 HWTEST_F(CellularDataHandlerTest, HandleRetryLoadSimAccount001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     auto event0 = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_RETRY_TO_LOAD_SIM_ACCOUNT);
     auto event1 = AppExecFwk::InnerEvent::Get(RadioEvent::RADIO_SIM_ACCOUNT_LOADED);
 
@@ -1149,7 +1150,7 @@ HWTEST_F(CellularDataHandlerTest, HandleRetryLoadSimAccount001, Function | Mediu
 */
 HWTEST_F(CellularDataHandlerTest, OnDataShareReady_001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->isSimAccountLoaded_ = false;
     cellularDataHandler->RemoveEvent(RadioEvent::RADIO_SIM_ACCOUNT_LOADED);
     cellularDataHandler->OnDataShareReady();
@@ -1164,7 +1165,7 @@ HWTEST_F(CellularDataHandlerTest, OnDataShareReady_001, Function | MediumTest | 
 */
 HWTEST_F(CellularDataHandlerTest, OnDataShareReady_002, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->isSimAccountLoaded_ = true;
     cellularDataHandler->RemoveEvent(RadioEvent::RADIO_SIM_ACCOUNT_LOADED);
     cellularDataHandler->OnDataShareReady();
@@ -1178,7 +1179,7 @@ HWTEST_F(CellularDataHandlerTest, OnDataShareReady_002, Function | MediumTest | 
 */
 HWTEST_F(CellularDataHandlerTest, OnDataShareReady_003, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->isSimAccountLoaded_ = false;
     auto event = AppExecFwk::InnerEvent::Get(RadioEvent::RADIO_SIM_ACCOUNT_LOADED);
     cellularDataHandler->SendEvent(event, 5000);
@@ -1194,7 +1195,7 @@ HWTEST_F(CellularDataHandlerTest, OnDataShareReady_003, Function | MediumTest | 
 */
 HWTEST_F(CellularDataHandlerTest, StartLoadSimAccountTimer_001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->StartLoadSimAccountTimer(0);
     EXPECT_FALSE(cellularDataHandler->HasInnerEvent(CellularDataEventCode::MSG_RETRY_TO_LOAD_SIM_ACCOUNT));
     cellularDataHandler->StartLoadSimAccountTimer(-1);
@@ -1208,7 +1209,7 @@ HWTEST_F(CellularDataHandlerTest, StartLoadSimAccountTimer_001, Function | Mediu
 */
 HWTEST_F(CellularDataHandlerTest, StartLoadSimAccountTimer_002, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->StopLoadSimAccountTimer();
     cellularDataHandler->StartLoadSimAccountTimer(1);
     EXPECT_TRUE(cellularDataHandler->HasInnerEvent(CellularDataEventCode::MSG_RETRY_TO_LOAD_SIM_ACCOUNT));
@@ -1222,7 +1223,7 @@ HWTEST_F(CellularDataHandlerTest, StartLoadSimAccountTimer_002, Function | Mediu
 */
 HWTEST_F(CellularDataHandlerTest, StartLoadSimAccountTimer_003, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->StartLoadSimAccountTimer(1);
     EXPECT_TRUE(cellularDataHandler->HasInnerEvent(CellularDataEventCode::MSG_RETRY_TO_LOAD_SIM_ACCOUNT));
     cellularDataHandler->StartLoadSimAccountTimer(2);
@@ -1237,7 +1238,7 @@ HWTEST_F(CellularDataHandlerTest, StartLoadSimAccountTimer_003, Function | Mediu
 */
 HWTEST_F(CellularDataHandlerTest, HandleRetryLoadSimAccount_002, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->isSimAccountLoaded_ = false;
     auto event = AppExecFwk::InnerEvent::Get(0);
     event = nullptr;
@@ -1252,7 +1253,7 @@ HWTEST_F(CellularDataHandlerTest, HandleRetryLoadSimAccount_002, Function | Medi
 */
 HWTEST_F(CellularDataHandlerTest, HandleRetryLoadSimAccount_003, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(-1);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(-1);
     auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_RETRY_TO_LOAD_SIM_ACCOUNT, 2);
     cellularDataHandler->isSimAccountLoaded_ = false;
     cellularDataHandler->RemoveEvent(RadioEvent::RADIO_SIM_ACCOUNT_LOADED);
@@ -1267,7 +1268,7 @@ HWTEST_F(CellularDataHandlerTest, HandleRetryLoadSimAccount_003, Function | Medi
 */
 HWTEST_F(CellularDataHandlerTest, HandleRetryLoadSimAccount_004, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(-1);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(-1);
     auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_RETRY_TO_LOAD_SIM_ACCOUNT);
     cellularDataHandler->isSimAccountLoaded_ = true;
     cellularDataHandler->RemoveEvent(RadioEvent::RADIO_SIM_ACCOUNT_LOADED);
@@ -1282,7 +1283,7 @@ HWTEST_F(CellularDataHandlerTest, HandleRetryLoadSimAccount_004, Function | Medi
 */
 HWTEST_F(CellularDataHandlerTest, HandleRetryLoadSimAccount_005, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(-1);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(-1);
     auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_RETRY_TO_LOAD_SIM_ACCOUNT);
     auto simEvent = AppExecFwk::InnerEvent::Get(RadioEvent::RADIO_SIM_ACCOUNT_LOADED);
     cellularDataHandler->isSimAccountLoaded_ = false;
@@ -1299,7 +1300,7 @@ HWTEST_F(CellularDataHandlerTest, HandleRetryLoadSimAccount_005, Function | Medi
 */
 HWTEST_F(CellularDataHandlerTest, HandleRetryLoadSimAccount_006, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(-1);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(-1);
     auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_RETRY_TO_LOAD_SIM_ACCOUNT);
     auto simEvent = AppExecFwk::InnerEvent::Get(RadioEvent::RADIO_SIM_ACCOUNT_LOADED);
     cellularDataHandler->isSimAccountLoaded_ = true;
@@ -1316,7 +1317,7 @@ HWTEST_F(CellularDataHandlerTest, HandleRetryLoadSimAccount_006, Function | Medi
 */
 HWTEST_F(CellularDataHandlerTest, StopLoadSimAccountTimer_001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->StartLoadSimAccountTimer(1);
     EXPECT_TRUE(cellularDataHandler->HasInnerEvent(CellularDataEventCode::MSG_RETRY_TO_LOAD_SIM_ACCOUNT));
     cellularDataHandler->StopLoadSimAccountTimer();
@@ -1325,7 +1326,7 @@ HWTEST_F(CellularDataHandlerTest, StopLoadSimAccountTimer_001, Function | Medium
 
 HWTEST_F(CellularDataHandlerTest, MsgRequestNetwork001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->apnManager_ = sptr<ApnManager>::MakeSptr();
     cellularDataHandler->apnManager_->InitApnHolders();
     std::unique_ptr<NetRequest> netRequest = std::make_unique<NetRequest>();
@@ -1341,7 +1342,7 @@ HWTEST_F(CellularDataHandlerTest, MsgRequestNetwork001, Function | MediumTest | 
 
 HWTEST_F(CellularDataHandlerTest, IsBlockSetRilAttachApn_001, Function | MediumTest | Level3)
 {
-    auto cellularDataHandler = std::make_shared<CellularDataHandler>(0);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
     cellularDataHandler->Init();
     cellularDataHandler->lastNumeric_ = "00101";
     EXPECT_FALSE(cellularDataHandler->IsBlockSetRilAttachApn());

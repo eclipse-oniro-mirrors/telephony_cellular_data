@@ -1,0 +1,24 @@
+# Copyright (C) 2026 Huawei Device Co., Ltd.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# gtest/gmock 头文件模板代码不做 CFI 插桩（思路对齐 netmanager_enhanced 单测先例，
+# 但收敛为一条前缀规则）：
+# - 预编译 libgmock.a/libgtest.a 未插桩，测试侧头文件实例化代码被插桩后，其对
+#   gmock 内部函数指针/虚函数的间接调用会因目标未注册 type id 而校验失败 SIGABRT；
+# - 且 OHOS ThinLTO 链接期存在模板实例 stub 注册丢失（实测 gtest-matchers.h 的
+#   AnythingMatcher 系 MatchAndExplainImpl 未进 __cfi_check 表，同型 EqMatcher 系
+#   却在），逐头枚举无法收敛，故按 googletest 目录前缀整体豁免；
+# - mock 方法本体（test/mock/，不在 googletest 目录）保持插桩注册，mock 类 vtable
+#   正常注册，满足系统 so（libtel_cellular_data_api.z.so）反向虚调用的校验。
+[cfi]
+src:*/third_party/googletest/*

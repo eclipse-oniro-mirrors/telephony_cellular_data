@@ -25,6 +25,7 @@
 #include "tel_event_handler.h"
 #include "pdp_profile_data.h"
 #include "telephony_ext_wrapper.h"
+#include "utils/test_async_utils.h"
 
 namespace OHOS {
 namespace Telephony {
@@ -55,7 +56,18 @@ void ApnManagerTest::TearDown()
 class StateMachineTest : public TelEventHandler {
 public:
     StateMachineTest() : TelEventHandler("StateMachineTest") {}
-    ~StateMachineTest() = default;
+    ~StateMachineTest()
+    {
+        // 用例结束先停机排空 FFRT 队列再析构，规避 TelEventQueue 生命周期竞态（DT Signal 6）
+        if (cellularDataStateMachine_ != nullptr) {
+            if (cellularDataStateMachine_->cdConnectionManager_ != nullptr) {
+                TestAsyncUtils::DrainStateMachine(cellularDataStateMachine_->cdConnectionManager_.get());
+            }
+            TestAsyncUtils::DrainStateMachine(cellularDataStateMachine_.get());
+            cellularDataStateMachine_ = nullptr;
+        }
+        TestAsyncUtils::DrainTelEventHandler(this);
+    }
     std::shared_ptr<CellularDataStateMachine> CreateCellularDataStateMachine(int32_t slotId);
 
 public:

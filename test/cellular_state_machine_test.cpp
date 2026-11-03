@@ -33,6 +33,7 @@
 #include "tel_event_handler.h"
 #include "telephony_types.h"
 #include "tel_ril_data_parcel.h"
+#include "utils/test_async_utils.h"
 
 namespace OHOS {
 namespace Telephony {
@@ -76,7 +77,15 @@ void CellularStateMachineTest::TearDown() {}
 class IncallDataStateMachineTest : public TelEventHandler {
 public:
     IncallDataStateMachineTest() : TelEventHandler("IncallDataStateMachineTest") {}
-    ~IncallDataStateMachineTest() = default;
+    ~IncallDataStateMachineTest()
+    {
+        // 用例结束先停机排空 FFRT 队列再析构，规避 TelEventQueue 生命周期竞态（DT Signal 6）
+        if (incallStateMachine_ != nullptr) {
+            TestAsyncUtils::DrainStateMachine(incallStateMachine_.get());
+            incallStateMachine_ = nullptr;
+        }
+        TestAsyncUtils::DrainTelEventHandler(this);
+    }
     std::shared_ptr<IncallDataStateMachine> CreateIncallDataStateMachine();
     int32_t Init(int32_t callState, int32_t slotId);
 
@@ -110,7 +119,18 @@ int32_t IncallDataStateMachineTest::Init(int32_t callState, int32_t slotId)
 class CellularMachineTest : public TelEventHandler {
 public:
     CellularMachineTest() : TelEventHandler("CellularDataStateMachineTest") {}
-    ~CellularMachineTest() = default;
+    ~CellularMachineTest()
+    {
+        // 用例结束先停机排空 FFRT 队列再析构，规避 TelEventQueue 生命周期竞态（DT Signal 6）
+        if (cellularDataStateMachine_ != nullptr) {
+            if (cellularDataStateMachine_->cdConnectionManager_ != nullptr) {
+                TestAsyncUtils::DrainStateMachine(cellularDataStateMachine_->cdConnectionManager_.get());
+            }
+            TestAsyncUtils::DrainStateMachine(cellularDataStateMachine_.get());
+            cellularDataStateMachine_ = nullptr;
+        }
+        TestAsyncUtils::DrainTelEventHandler(this);
+    }
     std::shared_ptr<CellularDataStateMachine> CreateCellularDataConnect(int32_t slotId);
 
 public:

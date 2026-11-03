@@ -112,9 +112,18 @@ HWTEST_F(CellularDataDumpHelperTest, CellularDataDumpHelper_03, Function | Mediu
     ASSERT_TRUE(result.find("CellularDataRoamingEnabled") == std::string::npos);
 }
 
+/**
+ * @tc.number   CellularDataDumpHelper_04
+ * @tc.name     test dump cellular data info with sim card
+ * @tc.desc     Function test
+ * @tc.note     移植自 DT 补丁分支并适配：原版依赖另一分支 CellularDataDumpHelper 的可设成员
+ *              maxSlotCount_ 控制槽位循环；本分支循环上限为 SIM_SLOT_COUNT
+ *              （= GetMaxSlotCount<int32_t>()，运行期取值）。适配方式：去掉 maxSlotCount_
+ *              赋值，HasSimCard 期望由 WillOnce×2 改为 WillOnce(slot0 有卡) +
+ *              WillRepeatedly(其余槽位无卡)，适配任意槽位数；断言语义不变。
+ */
 HWTEST_F(CellularDataDumpHelperTest, CellularDataDumpHelper_04, Function | MediumTest | Level1)
 {
-    maxSlotCount_ = 2;
     EXPECT_CALL(*mockCoreService, HasSimCard(_, _))
         .WillOnce(testing::Invoke([](int32_t slotId, const sptr<IRawParcelCallback> &callback) {
             sptr<RawParcelCallbackStub> cb = static_cast<RawParcelCallbackStub*>(callback.GetRefPtr());
@@ -123,12 +132,11 @@ HWTEST_F(CellularDataDumpHelperTest, CellularDataDumpHelper_04, Function | Mediu
             MessageOption option;
             data.WriteInterfaceToken(u"OHOS.Telephony.IRawParcelCallback");
             data.WriteInt32(0);
-            data.WriteBool(true); // hasSimCard = false
+            data.WriteBool(true); // hasSimCard = true
             cb->OnRemoteRequest(0, data, reply, option);
             return 0;
         }))
-        
-        .WillOnce(testing::Invoke([](int32_t slotId, const sptr<IRawParcelCallback> &callback) {
+        .WillRepeatedly(testing::Invoke([](int32_t slotId, const sptr<IRawParcelCallback> &callback) {
             sptr<RawParcelCallbackStub> cb = static_cast<RawParcelCallbackStub*>(callback.GetRefPtr());
             MessageParcel data;
             MessageParcel reply;
@@ -146,7 +154,6 @@ HWTEST_F(CellularDataDumpHelperTest, CellularDataDumpHelper_04, Function | Mediu
     std::cout << "CellularDataDumpHelper_04 result: " << result << std::endl;
     ASSERT_FALSE(result.find("Ohos cellular data service") == std::string::npos);
     ASSERT_FALSE(result.find("CellularDataRoamingEnabled") == std::string::npos);
-    maxSlotCount_ = 0;
 }
 
 }  // namespace Telephony
