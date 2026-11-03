@@ -702,7 +702,7 @@ bool ApnManager::IsPreferredApnUserEdited()
 
 void ApnManager::ClearAllApnBad()
 {
-    std::shared_lock<std::shared_mutex> lock(apnHolderMutex_);
+    std::unique_lock<std::shared_mutex> lock(apnHolderMutex_);
     for (const sptr<ApnHolder> &apnHolder : apnHolders_) {
         if (apnHolder != nullptr) {
             apnHolder->SetApnBadState(false);
