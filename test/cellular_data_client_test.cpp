@@ -41,10 +41,10 @@ public:
     static void TearDownTestCase();
     void SetUp();
     void TearDown();
-};
 
 protected:
     sptr<MockCellularDataManager> mockCellularData_ = nullptr;
+};
 void CellularDataClientTest::SetUpTestCase() {}
 
 void CellularDataClientTest::TearDownTestCase() {}
@@ -55,8 +55,8 @@ void CellularDataClientTest::SetUp()
     mockCellularData_ = sptr<MockCellularDataManager>::MakeSptr();
     ASSERT_TRUE(mockCellularData_ != nullptr);
     CellularDataClient::GetInstance().proxy_ = mockCellularData_;
-    CellularDataClient::GetInstance().defaultCellularDataSlotId_.store(INVALID_MAIN_CARD_SLOTID);
-    CellularDataClient::GetInstance().defaultCellularDataSimId_.store(0);
+    CellularDataClient::GetInstance().defaultCellularDataSlotId_ = INVALID_MAIN_CARD_SLOTID;
+    CellularDataClient::GetInstance().defaultCellularDataSimId_ = 0;
 }
 
 void CellularDataClientTest::TearDown()
@@ -208,8 +208,8 @@ HWTEST_F(CellularDataClientTest, SetDefaultCellularDataSlotId_001, TestSize.Leve
         .WillOnce(DoAll(SetArgReferee<0>(100), Return(TELEPHONY_ERR_SUCCESS)));
     int32_t result = CellularDataClient::GetInstance().SetDefaultCellularDataSlotId(0);
     EXPECT_EQ(result, TELEPHONY_ERR_SUCCESS);
-    EXPECT_EQ(CellularDataClient::GetInstance().defaultCellularDataSlotId_.load(), 0);
-    EXPECT_EQ(CellularDataClient::GetInstance().defaultCellularDataSimId_.load(), 100);
+    EXPECT_EQ(CellularDataClient::GetInstance().defaultCellularDataSlotId_, 0);
+    EXPECT_EQ(CellularDataClient::GetInstance().defaultCellularDataSimId_, 100);
 }
 
 /**
