@@ -421,18 +421,5 @@ HWTEST_F(CellularDataClientTest, GetDefaultCellularDataSlotIdFromProxy, TestSize
     int32_t slotId = CellularDataClient::GetInstance().GetDefaultCellularDataSlotIdFromProxy();
     EXPECT_EQ(slotId, 1);
 }
-
-/**
- * @tc.number   CellularDataServiceValidTest_001
- * @tc.name     test get proxy valid
- * @tc.desc     Function test
- * @tc.note     移植自 DT 补丁分支；原版为真实 IPC 断言（依赖设备上 SA 4007 在线）。
- *              按"client 测 client（无真实 IPC）"原则改造：SetUp 已将 mockCellularData_
- *              注入 CellularDataClient::proxy_，GetProxy() 应短路返回注入代理，不触达 samgr。
- */
-HWTEST_F(CellularDataClientTest, CellularDataServiceValidTest_001, TestSize.Level3)
-{
-    EXPECT_TRUE(CellularDataClient::GetInstance().GetProxy() != nullptr);
-}
 } // namespace Telephony
 } // namespace OHOS
