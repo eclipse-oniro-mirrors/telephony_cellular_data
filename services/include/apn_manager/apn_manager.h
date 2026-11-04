@@ -61,7 +61,6 @@ private:
     void MergePdpProfile(PdpProfile &newProfile, PdpProfile &oldProfile);
     bool GetPreferId(int32_t slotId, std::string &errMsg);
     int32_t PushApnItem(int32_t count, int32_t slotId, sptr<ApnItem> extraApnItem);
-    bool HasAnyConnectedStateInner() const;
 
 private:
     static const std::map<std::string, int32_t> apnIdApnNameMap_;
