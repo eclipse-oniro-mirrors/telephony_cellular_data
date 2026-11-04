@@ -508,8 +508,9 @@ bool ApnManager::IsDataConnectionNotUsed(const std::shared_ptr<CellularDataState
     return true;
 }
 
-bool ApnManager::HasAnyConnectedStateInner() const
+bool ApnManager::HasAnyConnectedState() const
 {
+    std::shared_lock<std::shared_mutex> lock(apnHolderMutex_);
     for (const sptr<ApnHolder> &apnHolder : apnHolders_) {
         if (apnHolder == nullptr) {
             TELEPHONY_LOGE("apn holder is null");
@@ -523,12 +524,6 @@ bool ApnManager::HasAnyConnectedStateInner() const
     return false;
 }
 
-bool ApnManager::HasAnyConnectedState() const
-{
-    std::shared_lock<std::shared_mutex> lock(apnHolderMutex_);
-    return HasAnyConnectedStateInner();
-}
-
 ApnProfileState ApnManager::GetOverallApnState() const
 {
     std::shared_lock<std::shared_mutex> lock(apnHolderMutex_);
@@ -536,11 +531,13 @@ ApnProfileState ApnManager::GetOverallApnState() const
         TELEPHONY_LOGE("apn overall state is STATE_IDLE");
         return ApnProfileState::PROFILE_STATE_IDLE;
     }
-    if (HasAnyConnectedStateInner()) {
+    lock.unlock();
+    if (HasAnyConnectedState()) {
         TELEPHONY_LOGD("apn overall state is STATE_CONNECTED");
         return ApnProfileState::PROFILE_STATE_CONNECTED;
     }
     bool failState = false;
+    lock.lock();
     for (const sptr<ApnHolder> &apnHolder : apnHolders_) {
         if (apnHolder == nullptr) {
             continue;
@@ -553,7 +550,6 @@ ApnProfileState ApnManager::GetOverallApnState() const
             failState = true;
         }
     }
-    lock.unlock();
     if (failState) {
         TELEPHONY_LOGD("apn overall state is STATE_IDLE");
         return ApnProfileState::PROFILE_STATE_IDLE;
@@ -583,7 +579,6 @@ ApnProfileState ApnManager::GetOverallDefaultApnState() const
             internalApnState = apnHolder->GetApnState();
         }
     }
-    lock.unlock();
     HILOG_COMM_IMPL(LOG_INFO, LOG_DOMAIN, TELEPHONY_LOG_TAG,
         "defaultApnState is %{public}d, internalApnState is %{public}d", defaultApnState, internalApnState);
     for (auto apnState : apnStateArr_) {
