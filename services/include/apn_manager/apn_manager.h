@@ -70,6 +70,7 @@ private:
     std::vector<sptr<ApnHolder>> apnHolders_;
     std::map<int32_t, sptr<ApnHolder>> apnIdApnHolderMap_;
     std::vector<sptr<ApnHolder>> sortedApnHolders_;
+    mutable std::shared_mutex apnHolderMutex_;
     std::shared_mutex mutex_;
     int32_t preferId_ = -1;
     bool preferIdChangedByMerge_ = false;
