@@ -469,8 +469,13 @@ void CellularDataHandler::EstablishAllApnsIfConnectable()
 bool CellularDataHandler::SetDataPermittedForMms(bool dataPermittedForMms)
 {
     TELEPHONY_LOGI("SetDataPermittedForMms:%{public}d", dataPermittedForMms);
-    if (incallDataStateMachine_ != nullptr) {
-        TELEPHONY_LOGI("Slot%{public}d: incall data active", slotId_);
+    // incallDataStateMachine_ 创建后常驻（通话结束仅 DeInit 清内部状态，不清本指针），
+    // 不能以指针非空判定通话中；须以状态机记录的实际通话状态判定（IDLE/DISCONNECTED 视为已结束）
+    if (incallDataStateMachine_ != nullptr &&
+        incallDataStateMachine_->GetCallState() != static_cast<int32_t>(TelCallStatus::CALL_STATUS_IDLE) &&
+        incallDataStateMachine_->GetCallState() != static_cast<int32_t>(TelCallStatus::CALL_STATUS_DISCONNECTED)) {
+        TELEPHONY_LOGI("Slot%{public}d: incall data active, callState:%{public}d", slotId_,
+            incallDataStateMachine_->GetCallState());
         return false;
     }
     // For slotId=3 in TSTS mode, do not send SetDataPermitted to slot0 or slot3
