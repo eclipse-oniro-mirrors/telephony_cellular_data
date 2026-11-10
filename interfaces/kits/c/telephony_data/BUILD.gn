@@ -24,6 +24,8 @@ ohos_shared_library("telephony_data") {
 
   branch_protector_ret = "pac_ret"
 
+  version_script = "libtelephony_data.map"
+
   output_extension = "so"
   include_dirs =
       [ "$CELLULAR_DATA_DIR/interfaces/kits/c/telephony_data/include" ]
