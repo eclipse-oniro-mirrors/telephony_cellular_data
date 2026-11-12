@@ -42,6 +42,7 @@ ohos_shared_library("tel_cellular_data") {
   }
   use_exceptions = true
   branch_protector_ret = "pac_ret"
+  version_script = "libtel_cellular_data.map"
   sources = [
     "$DATA_SERVICE_EXT_WRAPPER_ROOT/src/data_service_ext_wrapper.cpp",
     "$TELEPHONY_EXT_WRAPPER_ROOT/src/telephony_ext_wrapper.cpp",
