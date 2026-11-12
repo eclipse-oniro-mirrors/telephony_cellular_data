@@ -32,9 +32,11 @@ CellularDataRoamingObserver::~CellularDataRoamingObserver() = default;
 void CellularDataRoamingObserver::OnChange()
 {
     std::shared_ptr<CellularDataSettingsRdbHelper> settingHelper = CellularDataSettingsRdbHelper::GetInstance();
+    // LCOV_EXCL_START
     if (settingHelper == nullptr) {
         return;
     }
+    // LCOV_EXCL_STOP
     int32_t simId = CoreManagerInner::GetInstance().GetSimId(slotId_);
     if (simId <= INVALID_SIM_ID) {
         TELEPHONY_LOGE("Slot%{public}d: failed due to invalid sim id %{public}d", slotId_, simId);

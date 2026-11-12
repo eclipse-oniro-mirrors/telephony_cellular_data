@@ -28,6 +28,7 @@
 #include "cellular_data_service.h"
 #include "cellular_data_types.h"
 #include "core_service_client.h"
+#include "core_manager_inner.h"
 #include "data_access_token.h"
 #include "gtest/gtest-message.h"
 #include "gtest/gtest-test-part.h"
@@ -43,6 +44,8 @@
 #include "net_handle.h"
 #include "net_specifier.h"
 #include "mock/mock_cellular_data_manager.h"
+#include "mock/mock_sim_manager.h"
+#include "mock/mock_network_search.h"
 #include "utils/test_async_utils.h"
 #include "ostream"
 #include "permission_def.h"
@@ -1082,6 +1085,55 @@ HWTEST_F(CellularDataTest, Telephony_Cellulardata_InitTelephonyExtService_0102, 
 }
 
 /**
+ * @tc.number   InitTelephonyExtWrapperForCellularDataWhenDlsymNull
+ * @tc.name     Init Telephony Ext Service with all symbols unresolved.
+ * @tc.desc     Function test: dlopen succeeds but every dlsym returns null, all Init* hit null branches
+ */
+HWTEST_F(CellularDataTest, InitTelephonyExtWrapperForCellularDataWhenDlsymNull, Function | MediumTest | Level1)
+{
+    mockGetBoolParameter = new NiceMock<MockGetBoolParameter>();
+    EXPECT_CALL(*mockGetBoolParameter, GetBoolParameter(_, _)).WillRepeatedly(Return(true));
+    mockDlsym = new NiceMock<MockDlsym>();
+    EXPECT_CALL(*mockDlsym, dlopen(_, _)).WillRepeatedly(Return(reinterpret_cast<void *>(0x1234)));
+    EXPECT_CALL(*mockDlsym, dlsym(_, _)).WillRepeatedly(Return(nullptr));
+    TELEPHONY_EXT_WRAPPER.InitTelephonyExtWrapperForCellularData();
+    EXPECT_EQ(TELEPHONY_EXT_WRAPPER.telephonyExtWrapperHandle_ != nullptr, true);
+    EXPECT_EQ(TELEPHONY_EXT_WRAPPER.isDistributedCellularEnabledForSlot_, nullptr);
+    EXPECT_EQ(TELEPHONY_EXT_WRAPPER.isVirtualModemSlot_, nullptr);
+    // 清理 fake 句柄，避免残留影响后续用例
+    TELEPHONY_EXT_WRAPPER.telephonyExtWrapperHandle_ = nullptr;
+    delete mockGetBoolParameter;
+    mockGetBoolParameter = nullptr;
+    delete mockDlsym;
+    mockDlsym = nullptr;
+}
+
+/**
+ * @tc.number   InitTelephonyExtWrapperForCellularDataWhenDlsymSucc
+ * @tc.name     Init Telephony Ext Service with all symbols resolved.
+ * @tc.desc     Function test: every dlsym succeeds, all Init* hit success branches; cleanup resets pointers
+ */
+HWTEST_F(CellularDataTest, InitTelephonyExtWrapperForCellularDataWhenDlsymSucc, Function | MediumTest | Level1)
+{
+    mockGetBoolParameter = new NiceMock<MockGetBoolParameter>();
+    EXPECT_CALL(*mockGetBoolParameter, GetBoolParameter(_, _)).WillRepeatedly(Return(true));
+    mockDlsym = new NiceMock<MockDlsym>();
+    EXPECT_CALL(*mockDlsym, dlopen(_, _)).WillRepeatedly(Return(reinterpret_cast<void *>(0x1234)));
+    EXPECT_CALL(*mockDlsym, dlsym(_, _)).WillRepeatedly(Return(reinterpret_cast<void *>(0x5678)));
+    TELEPHONY_EXT_WRAPPER.InitTelephonyExtWrapperForCellularData();
+    EXPECT_EQ(TELEPHONY_EXT_WRAPPER.isDistributedCellularEnabledForSlot_ != nullptr, true);
+    EXPECT_EQ(TELEPHONY_EXT_WRAPPER.isVirtualModemSlot_ != nullptr, true);
+    // 清理：dlsym 置空后重新初始化，把所有函数指针还原为 null，避免 fake 指针残留
+    EXPECT_CALL(*mockDlsym, dlsym(_, _)).WillRepeatedly(Return(nullptr));
+    TELEPHONY_EXT_WRAPPER.InitTelephonyExtWrapperForCellularData();
+    TELEPHONY_EXT_WRAPPER.telephonyExtWrapperHandle_ = nullptr;
+    delete mockGetBoolParameter;
+    mockGetBoolParameter = nullptr;
+    delete mockDlsym;
+    mockDlsym = nullptr;
+}
+
+/**
  * @tc.number   InitIsVirtualModemConnectedWhenParaFalse
  * @tc.name     Init Telephony Ext Service.
  * @tc.desc     Function test
@@ -1181,6 +1233,8 @@ HWTEST_F(CellularDataTest, InitIsVirtualModemSlotWhenParaTrue, Function | Medium
     ASSERT_EQ(TELEPHONY_EXT_WRAPPER.isVirtualModemSlot_, nullptr);
     delete mockGetBoolParameter;
     mockGetBoolParameter = nullptr;
+    delete mockDlsym;
+    mockDlsym = nullptr;
 }
 
 /**
@@ -1964,6 +2018,122 @@ HWTEST_F(CellularDataTest, InitSendCellularDataSlotChangeInfo_WhenSymbolFound, F
     ASSERT_NE(TELEPHONY_EXT_WRAPPER.sendCellularDataSlotChangeInfo_, nullptr);
     delete mockDlsym;
     mockDlsym = nullptr;
+}
+
+namespace {
+// CoreManagerInner RAII mock 守卫：构造注入 mock sim/networkSearch，析构还原（防真实 core_service IPC）
+class ScopedCoreMockCtl {
+public:
+    ScopedCoreMockCtl()
+    {
+        auto &core = CoreManagerInner::GetInstance();
+        savedSim_ = core.simManager_;
+        savedNss_ = core.networkSearchManager_;
+        simMock_ = std::make_shared<NiceMock<MockSimManager>>();
+        nssMock_ = std::make_shared<NiceMock<MockNetworkSearchManager>>();
+        core.simManager_ = simMock_;
+        core.networkSearchManager_ = nssMock_;
+    }
+    ~ScopedCoreMockCtl()
+    {
+        auto &core = CoreManagerInner::GetInstance();
+        core.simManager_ = savedSim_;
+        core.networkSearchManager_ = savedNss_;
+    }
+    std::shared_ptr<MockSimManager> simMock_;
+    std::shared_ptr<MockNetworkSearchManager> nssMock_;
+
+private:
+    std::shared_ptr<ISimManager> savedSim_;
+    std::shared_ptr<INetworkSearch> savedNss_;
+};
+} // namespace
+
+/**
+ * @tc.number   ControllerRegisterEvents_Test_01
+ * @tc.name     Test the Controller RegisterEvents function with null handler
+ * @tc.desc     Function test
+ */
+HWTEST_F(CellularDataTest, ControllerRegisterEvents_Test_01, TestSize.Level3)
+{
+    ScopedCoreMockCtl core;
+    auto controller = std::make_shared<CellularDataController>(DEFAULT_SIM_SLOT_ID);
+    ASSERT_TRUE(controller->cellularDataHandler_ == nullptr);
+    controller->RegisterEvents();
+    EXPECT_TRUE(controller->cellularDataHandler_ == nullptr);
+}
+
+/**
+ * @tc.number   ControllerRegisterEvents_Test_02
+ * @tc.name     Test the Controller RegisterEvents function with handler on slot 0
+ * @tc.desc     Function test
+ */
+HWTEST_F(CellularDataTest, ControllerRegisterEvents_Test_02, TestSize.Level3)
+{
+    ScopedCoreMockCtl core;
+    EXPECT_CALL(*core.simMock_, RegisterCoreNotify(_, _, _)).Times(AtLeast(1));
+    EXPECT_CALL(*core.nssMock_, RegisterCoreNotify(_, _, _)).Times(AtLeast(1));
+    EXPECT_CALL(*core.nssMock_, RegisterCellularDataObject(_)).Times(AtLeast(1));
+    auto controller = std::make_shared<CellularDataController>(DEFAULT_SIM_SLOT_ID);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
+    ASSERT_TRUE(cellularDataHandler != nullptr);
+    controller->cellularDataHandler_ = cellularDataHandler;
+    controller->RegisterEvents();
+    EXPECT_TRUE(controller->cellularDataHandler_ != nullptr);
+    TestAsyncUtils::DrainCellularDataHandler(cellularDataHandler.get());
+}
+
+/**
+ * @tc.number   ControllerRegisterEvents_Test_03
+ * @tc.name     Test the Controller RegisterEvents function with handler on non-zero slot
+ * @tc.desc     Function test
+ */
+HWTEST_F(CellularDataTest, ControllerRegisterEvents_Test_03, TestSize.Level3)
+{
+    ScopedCoreMockCtl core;
+    EXPECT_CALL(*core.simMock_, RegisterCoreNotify(_, _, _)).Times(AtLeast(1));
+    EXPECT_CALL(*core.nssMock_, RegisterCoreNotify(_, _, _)).Times(AtLeast(1));
+    EXPECT_CALL(*core.nssMock_, RegisterCellularDataObject(_)).Times(0);
+    auto controller = std::make_shared<CellularDataController>(SIM_SLOT_ID_1);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(SIM_SLOT_ID_1);
+    ASSERT_TRUE(cellularDataHandler != nullptr);
+    controller->cellularDataHandler_ = cellularDataHandler;
+    controller->RegisterEvents();
+    EXPECT_TRUE(controller->cellularDataHandler_ != nullptr);
+    TestAsyncUtils::DrainCellularDataHandler(cellularDataHandler.get());
+}
+
+/**
+ * @tc.number   ControllerUnRegisterEvents_Test_01
+ * @tc.name     Test the Controller UnRegisterEvents function with null handler
+ * @tc.desc     Function test
+ */
+HWTEST_F(CellularDataTest, ControllerUnRegisterEvents_Test_01, TestSize.Level3)
+{
+    ScopedCoreMockCtl core;
+    auto controller = std::make_shared<CellularDataController>(DEFAULT_SIM_SLOT_ID);
+    ASSERT_TRUE(controller->cellularDataHandler_ == nullptr);
+    controller->UnRegisterEvents();
+    EXPECT_TRUE(controller->cellularDataHandler_ == nullptr);
+}
+
+/**
+ * @tc.number   ControllerUnRegisterEvents_Test_02
+ * @tc.name     Test the Controller UnRegisterEvents function with handler
+ * @tc.desc     Function test
+ */
+HWTEST_F(CellularDataTest, ControllerUnRegisterEvents_Test_02, TestSize.Level3)
+{
+    ScopedCoreMockCtl core;
+    EXPECT_CALL(*core.simMock_, UnRegisterCoreNotify(_, _, _)).Times(AtLeast(1));
+    EXPECT_CALL(*core.nssMock_, UnRegisterCoreNotify(_, _, _)).Times(AtLeast(1));
+    auto controller = std::make_shared<CellularDataController>(DEFAULT_SIM_SLOT_ID);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
+    ASSERT_TRUE(cellularDataHandler != nullptr);
+    controller->cellularDataHandler_ = cellularDataHandler;
+    controller->UnRegisterEvents();
+    EXPECT_TRUE(controller->cellularDataHandler_ != nullptr);
+    TestAsyncUtils::DrainCellularDataHandler(cellularDataHandler.get());
 }
 } // namespace Telephony
 } // namespace OHOS

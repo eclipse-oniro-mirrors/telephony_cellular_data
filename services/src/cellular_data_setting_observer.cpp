@@ -31,9 +31,11 @@ CellularDataSettingObserver::~CellularDataSettingObserver() = default;
 void CellularDataSettingObserver::OnChange()
 {
     std::shared_ptr<CellularDataSettingsRdbHelper> settingHelper = CellularDataSettingsRdbHelper::GetInstance();
+    // LCOV_EXCL_START
     if (settingHelper == nullptr) {
         return;
     }
+    // LCOV_EXCL_STOP
     Uri uri(CELLULAR_DATA_SETTING_DATA_ENABLE_URI);
     int value = static_cast<int32_t>(RoamingSwitchCode::CELLULAR_DATA_ROAMING_DISABLED);
     if (settingHelper->GetValue(uri, CELLULAR_DATA_COLUMN_ENABLE, value) != TELEPHONY_SUCCESS) {

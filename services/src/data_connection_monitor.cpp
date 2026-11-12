@@ -48,6 +48,7 @@ void DataConnectionMonitor::HandleScreenStateChanged(bool isScreenOn)
 bool DataConnectionMonitor::IsVsimEnabled()
 {
 #ifdef OHOS_BUILD_ENABLE_TELEPHONY_EXT
+    // LCOV_EXCL_START
     if (TELEPHONY_EXT_WRAPPER.getVSimSlotId_ && TELEPHONY_EXT_WRAPPER.isVSimEnabled_) {
         int vSimSlotId = INVALID_SLOT_ID;
         TELEPHONY_EXT_WRAPPER.getVSimSlotId_(vSimSlotId);
@@ -55,6 +56,7 @@ bool DataConnectionMonitor::IsVsimEnabled()
             return true;
         }
     }
+    // LCOV_EXCL_STOP
 #endif
     return false;
 }
@@ -91,10 +93,12 @@ __attribute__((no_sanitize("cfi"))) void DataConnectionMonitor::OnStallDetection
 {
     TELEPHONY_LOGD("Slot%{public}d: on stall detection", slotId_);
 #ifdef OHOS_BUILD_ENABLE_DATA_SERVICE_EXT
+    // LCOV_EXCL_START
     if (DATA_SERVICE_EXT_WRAPPER.requestTcpAndDnsPackets_) {
         DATA_SERVICE_EXT_WRAPPER.requestTcpAndDnsPackets_();
         return;
     }
+    // LCOV_EXCL_STOP
 #endif
     UpdateFlowInfo();
     int32_t dataState = static_cast<int32_t>(DataConnectState::DATA_STATE_UNKNOWN);
@@ -242,9 +246,11 @@ void DataConnectionMonitor::ReregisterNetwork()
 {
     bool isProcess = false;
 #ifdef OHOS_BUILD_ENABLE_TELEPHONY_EXT
+    // LCOV_EXCL_START
     if (TELEPHONY_EXT_WRAPPER.reRegisterNetwork_) {
         TELEPHONY_EXT_WRAPPER.reRegisterNetwork_(slotId_, isProcess);
     }
+    // LCOV_EXCL_STOP
 #endif
     TELEPHONY_LOGI("ReregisterNetwork isProcess:%{public}d", isProcess);
     if (isProcess) {

@@ -99,13 +99,11 @@ bool CellularDataRdbHelper::QueryApns(
     std::string &errMsg)
 {
     std::shared_ptr<DataShare::DataShareHelper> dataShareHelper = CreateDataAbilityHelper(DB_CONNECT_MAX_WAIT_TIME);
-    // LCOV_EXCL_START
     if (dataShareHelper == nullptr) {
         TELEPHONY_LOGE("dataShareHelper is null");
         errMsg = "dataShareHelper is null";
         return false;
     }
-    // LCOV_EXCL_STOP
     std::vector<std::string> columns;
     DataShare::DataSharePredicates predicates;
     predicates.EqualTo(PdpProfileData::MCCMNC, mcc + mnc);
@@ -113,21 +111,17 @@ bool CellularDataRdbHelper::QueryApns(
     Uri cellularDataUri(std::string(CELLULAR_DATA_RDB_SELECTION) + "?simId=" + std::to_string(simId));
     std::shared_ptr<DataShare::DataShareResultSet> result =
         dataShareHelper->Query(cellularDataUri, predicates, columns);
-    // LCOV_EXCL_START
     if (result == nullptr) {
         TELEPHONY_LOGE("query apns error");
         dataShareHelper->Release();
         errMsg = "query apns error";
         return false;
     }
-    // LCOV_EXCL_STOP
     ReadApnResult(result, apnVec);
-    // LCOV_EXCL_START
     if (apnVec.size() == 0) {
         TELEPHONY_LOGE("read apn result empty");
         errMsg = "read apn result empty";
     }
-    // LCOV_EXCL_STOP
     result->Close();
     dataShareHelper->Release();
     return true;

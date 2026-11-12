@@ -48,7 +48,9 @@ public:
     void QueryAllApnInfo(std::vector<ApnInfo> &apnInfoList);
 
 private:
-    std::shared_ptr<DataShare::DataShareHelper> CreateDataAbilityHelper(const int waitTime = 2);
+    // 测试可注入缝隙：子类重写此方法返回 MockDataShareHelper，
+    // 用于在 UT 中模拟 DataShare 环境成功/失败/空结果等分支
+    virtual std::shared_ptr<DataShare::DataShareHelper> CreateDataAbilityHelper(const int waitTime = 2);
     int Update(const DataShare::DataShareValuesBucket &value, const DataShare::DataSharePredicates &predicates);
     int Insert(const DataShare::DataShareValuesBucket &values);
     void ReadApnResult(const std::shared_ptr<DataShare::DataShareResultSet> &result, std::vector<PdpProfile> &apnVec);

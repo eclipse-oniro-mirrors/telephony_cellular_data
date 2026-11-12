@@ -37,6 +37,7 @@
 #include "common_event_manager.h"
 #include "common_event_support.h"
 #include "core_service_client.h"
+#include "core_manager_inner.h"
 #include "data_access_token.h"
 #include "data_connection_manager.h"
 #include "data_connection_monitor.h"
@@ -47,6 +48,8 @@
 #include "inactive.h"
 #include "incall_data_state_machine.h"
 #include "mock/mock_telephony_permission.h"
+#include "mock/mock_sim_manager.h"
+#include "mock/mock_network_search.h"
 #include "net_manager_call_back.h"
 #include "net_manager_tactics_call_back.h"
 #include "network_search_callback.h"
@@ -59,10 +62,13 @@
 #include "apn_attribute.h"
 #include "icellular_data_manager.h"
 #include "utils/test_async_utils.h"
+#include "utils/scoped_setter.h"
 
 namespace OHOS {
 namespace Telephony {
 using namespace testing::ext;
+using ::testing::_;
+using ::testing::Return;
 
 namespace {
 const int32_t INVALID_SLOTID = -1;
@@ -3265,13 +3271,26 @@ HWTEST_F(BranchTest, SetDataPermittedForMms_VSim_001, Function | MediumTest | Le
  */
 HWTEST_F(BranchTest, SetDataPermittedForMms_InCallState_001, Function | MediumTest | Level3)
 {
-    system::SetParameter(PERSIST_TSTS_MODE, "1");
+    // 设备系统参数是进程外全局状态：经 RAII 守卫写入/还原原值，断言中止也不泄漏
+    ScopedSystemParam tstsParamGuard(PERSIST_TSTS_MODE, "1");
     auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(CELLDATA_SLOT_ID_3);
     cellularDataHandler->Init();
     // 模拟首次 IMS 呼叫创建通话中数据状态机：通话进行中（DIALING）仍需拦截
     cellularDataHandler->incallDataStateMachine_ =
         cellularDataHandler->CreateIncallDataStateMachine(TelCallStatus::CALL_STATUS_DIALING);
     ASSERT_NE(cellularDataHandler->incallDataStateMachine_, nullptr);
+    // 整改（历史概率失败，2026-11-11 实测复发）：Start() 投递的 MSG_STATE_MACHINE_INIT 由
+    // FFRT worker 异步执行 IdleState::StateBegin；若其观察到 IDLE/DISCONNECTED 会向 handler
+    // 投递 MSG_INCALL_DATA_COMPLETE → IncallDataComplete → DeInit 将 callState_ 重置 IDLE，
+    // 与本用例同步 UpdateCallState/断言序列竞态（ACTIVE 刚设好即被 DeInit 覆盖 → 拦截失效）。
+    // 屏障：轮询等待初始迁移完成（StateBegin 内 SetCurrentState 后 GetCurrentState 才非空）；
+    // 此刻本线程尚未改动 callState_（仍为 DIALING），StateBegin 必然不投递 COMPLETE；
+    // 屏障后机器队列已空、UpdateCallState 为纯同步成员写，后续序列确定性成立。
+    for (int32_t i = 0; i < 100 && cellularDataHandler->incallDataStateMachine_->GetCurrentState() == nullptr;
+         ++i) {
+        TestAsyncUtils::WaitMs(10);
+    }
+    ASSERT_NE(cellularDataHandler->incallDataStateMachine_->GetCurrentState(), nullptr);
     ASSERT_FALSE(cellularDataHandler->SetDataPermittedForMms(true));
     // 通话结束后指针残留（DeInit 不清指针），不得再被 incall 分支拦截，应落到 TSTS 分支返回 true
     cellularDataHandler->incallDataStateMachine_->UpdateCallState(TelCallStatus::CALL_STATUS_IDLE);
@@ -3286,7 +3305,6 @@ HWTEST_F(BranchTest, SetDataPermittedForMms_InCallState_001, Function | MediumTe
     // 排空并释放通话中数据状态机，规避 FFRT 队列析构竞态
     TestAsyncUtils::DrainStateMachine(cellularDataHandler->incallDataStateMachine_.get());
     cellularDataHandler->incallDataStateMachine_ = nullptr;
-    system::SetParameter(PERSIST_TSTS_MODE, "0");
 }
 
 
@@ -3308,6 +3326,176 @@ HWTEST_F(BranchTest, HandleDefaultDataSubscriptionChanged_Distributed_001, Funct
     EXPECT_EQ(cellularDataHandler->slotId_, CELLDATA_SLOT_ID_0);
     TELEPHONY_EXT_WRAPPER.isVirtualModemSlot_ = isVirtualModemSlotFun;
 #endif
+}
+
+namespace {
+// CoreManagerInner RAII mock 守卫（zero_branch 批次用）：构造注入 mock sim/networkSearch，析构还原
+class ScopedCoreMockZb {
+public:
+    ScopedCoreMockZb()
+    {
+        auto &core = CoreManagerInner::GetInstance();
+        savedSim_ = core.simManager_;
+        savedNss_ = core.networkSearchManager_;
+        simMock_ = std::make_shared<MockSimManager>();
+        nssMock_ = std::make_shared<MockNetworkSearchManager>();
+        core.simManager_ = simMock_;
+        core.networkSearchManager_ = nssMock_;
+    }
+    ~ScopedCoreMockZb()
+    {
+        auto &core = CoreManagerInner::GetInstance();
+        core.simManager_ = savedSim_;
+        core.networkSearchManager_ = savedNss_;
+    }
+    std::shared_ptr<MockSimManager> simMock_;
+    std::shared_ptr<MockNetworkSearchManager> nssMock_;
+
+private:
+    std::shared_ptr<ISimManager> savedSim_;
+    std::shared_ptr<INetworkSearch> savedNss_;
+};
+} // namespace
+
+/**
+ * @tc.number  DataConnectionManager_BandWidthsConfig_001
+ * @tc.name     operator config drives bandwidth map + uplinkUseLte merge + tech lookup variants
+ * @tc.desc     Function test
+ */
+HWTEST_F(BranchTest, DataConnectionManager_BandWidthsConfig_001, Function | MediumTest | Level3)
+{
+    ScopedCoreMockZb core;
+    ON_CALL(*core.simMock_, GetOperatorConfigs(_, _))
+        .WillByDefault([](int32_t, OperatorConfig &poc) {
+            poc.boolValue[KEY_BANDWIDTH_SOURCE_USE_MODEM_BOOL] = true;
+            poc.boolValue[KEY_UPLINK_BANDWIDTH_NR_NSA_USE_LTE_VALUE_BOOL] = true;
+            poc.stringArrayValue[KEY_BANDWIDTH_STRING_ARRAY] = { "LTE:100,200", "NR_NSA:300,400",
+                "NR_NSA_MMWAVE:500,600", "NR_SA:700,800", "BAD", "BAD2:1", "GSM:900" };
+            return 0;
+        });
+    ON_CALL(*core.nssMock_, GetNrState(_)).WillByDefault(Return(NrState::NR_STATE_NOT_SUPPORT));
+    ON_CALL(*core.nssMock_, GetFrequencyType(_))
+        .WillByDefault(Return(FrequencyType::FREQ_TYPE_MMWAVE));
+    DataConnectionManager con { 0 };
+    con.GetDefaultBandWidthsConfig();
+    EXPECT_TRUE(con.IsBandwidthSourceModem());
+
+    // LTE + NSA 双连接 + 毫米波 → NR_NSA_MMWAVE（上行已被 LTE 上行 200 覆盖）
+    ON_CALL(*core.nssMock_, GetNrState(_)).WillByDefault(Return(NrState::NR_NSA_STATE_DUAL_CONNECTED));
+    auto mmwave = con.GetBandwidthsByRadioTech(static_cast<int32_t>(RadioTech::RADIO_TECHNOLOGY_LTE));
+    EXPECT_EQ(mmwave.downBandwidth, 500u);
+    EXPECT_EQ(mmwave.upBandwidth, 200u);
+    // LTE + NSA 双连接 + 非毫米波 → NR_NSA
+    ON_CALL(*core.nssMock_, GetFrequencyType(_))
+        .WillByDefault(Return(FrequencyType::FREQ_TYPE_UNKNOWN));
+    auto nsa = con.GetBandwidthsByRadioTech(static_cast<int32_t>(RadioTech::RADIO_TECHNOLOGY_LTE));
+    EXPECT_EQ(nsa.downBandwidth, 300u);
+    EXPECT_EQ(nsa.upBandwidth, 200u);
+    // NR 独立组网 → NR_SA
+    auto nrSa = con.GetBandwidthsByRadioTech(static_cast<int32_t>(RadioTech::RADIO_TECHNOLOGY_NR));
+    EXPECT_EQ(nrSa.downBandwidth, 700u);
+    EXPECT_EQ(nrSa.upBandwidth, 800u);
+    // GSM → EDGE 无配置项（"BAD"/"BAD2:1"/"GSM:900" 均无效）→ LinkBandwidthInfo 默认值
+    auto miss = con.GetBandwidthsByRadioTech(static_cast<int32_t>(RadioTech::RADIO_TECHNOLOGY_GSM));
+    EXPECT_EQ(miss.downBandwidth, DEFAULT_BANDWIDTH);
+}
+
+/**
+ * @tc.number  DataConnectionManager_BandWidthsConfig_002
+ * @tc.name     default bandwidth config fallback + CONNECT_DETECT + SA_ATTACHED + uplinkUseLte off
+ * @tc.desc     Function test
+ */
+HWTEST_F(BranchTest, DataConnectionManager_BandWidthsConfig_002, Function | MediumTest | Level3)
+{
+    ScopedCoreMockZb core;
+    // simManager 空 → GetOperatorConfigs 提前返回 → 空配置走 DEFAULT_BANDWIDTH_CONFIG
+    ON_CALL(*core.nssMock_, GetNrState(_)).WillByDefault(Return(NrState::NR_NSA_STATE_CONNECTED_DETECT));
+    ON_CALL(*core.nssMock_, GetFrequencyType(_))
+        .WillByDefault(Return(FrequencyType::FREQ_TYPE_MMWAVE));
+    DataConnectionManager con { 0 };
+    con.GetDefaultBandWidthsConfig();
+    // LTE + CONNECT_DETECT + 毫米波 → NR_NSA_MMWAVE 默认值（uplinkUseLte_=false 不改上行）
+    auto mmwave = con.GetBandwidthsByRadioTech(static_cast<int32_t>(RadioTech::RADIO_TECHNOLOGY_LTE));
+    EXPECT_EQ(mmwave.downBandwidth, 145000u);
+    EXPECT_EQ(mmwave.upBandwidth, 60000u);
+    // SA 已附着（非双连接）→ LTE 保持 LTE
+    ON_CALL(*core.nssMock_, GetNrState(_)).WillByDefault(Return(NrState::NR_NSA_STATE_SA_ATTACHED));
+    auto lte = con.GetBandwidthsByRadioTech(static_cast<int32_t>(RadioTech::RADIO_TECHNOLOGY_LTE));
+    EXPECT_EQ(lte.downBandwidth, 30000u);
+    EXPECT_EQ(lte.upBandwidth, 15000u);
+    // uplinkUseLte_ 关闭：UpdateBandWidthsUseLte 提前返回，NR_NSA 上行保持默认
+    con.UpdateBandWidthsUseLte();
+    auto nsa = con.GetBandwidthsByRadioTech(static_cast<int32_t>(RadioTech::RADIO_TECHNOLOGY_NR));
+    EXPECT_EQ(nsa.upBandwidth, 60000u);
+}
+
+/**
+ * @tc.number  DataConnectionManager_TcpBufferConfig_001
+ * @tc.name     tcp buffer lookup variants (plain LTE / NSA mapped NR / LTE_CA / miss)
+ * @tc.desc     Function test
+ */
+HWTEST_F(BranchTest, DataConnectionManager_TcpBufferConfig_001, Function | MediumTest | Level3)
+{
+    ScopedCoreMockZb core;
+    ON_CALL(*core.nssMock_, GetNrState(_)).WillByDefault(Return(NrState::NR_STATE_NOT_SUPPORT));
+    // 设备 persist.sys.data.tcpbuffer 值不可控（真机为 "UMTS;HSPA" 非法格式→空表）：
+    // 注入已知配置并在结束时还原设备原值
+    std::string origConfig = system::GetParameter(CONFIG_TCP_BUFFER, DEFAULT_TCP_BUFFER_CONFIG);
+    system::SetParameter(CONFIG_TCP_BUFFER, "UMTS:u;LTE:l;NR:n;LTE_CA:c");
+    DataConnectionManager con { 0 };
+    con.GetDefaultTcpBufferConfig();
+    // 非 LTE：WCDMA → "UMTS" 命中
+    EXPECT_EQ(con.GetTcpBufferByRadioTech(static_cast<int32_t>(RadioTech::RADIO_TECHNOLOGY_WCDMA)), "u");
+    // LTE 无 NSA → "LTE" 命中
+    EXPECT_EQ(con.GetTcpBufferByRadioTech(static_cast<int32_t>(RadioTech::RADIO_TECHNOLOGY_LTE)), "l");
+    // LTE + NSA 双连接 → 映射 "NR" 命中
+    ON_CALL(*core.nssMock_, GetNrState(_)).WillByDefault(Return(NrState::NR_NSA_STATE_DUAL_CONNECTED));
+    EXPECT_EQ(con.GetTcpBufferByRadioTech(static_cast<int32_t>(RadioTech::RADIO_TECHNOLOGY_LTE)), "n");
+    // LTE_CA + NSA 双连接 → 映射 "NR" 命中
+    EXPECT_EQ(con.GetTcpBufferByRadioTech(static_cast<int32_t>(RadioTech::RADIO_TECHNOLOGY_LTE_CA)), "n");
+    // UNKNOWN → "unknown" 未命中 → 空
+    EXPECT_TRUE(con.GetTcpBufferByRadioTech(0).empty());
+    // 还原设备原值
+    system::SetParameter(CONFIG_TCP_BUFFER, origConfig);
+}
+
+/**
+ * @tc.number  DataConnectionManager_BandWidthsConfig_003
+ * @tc.name     bandwidth config keys absent / partial-present variants
+ * @tc.desc     三个 opcfg 键的 find==end 弧：全缺失 / 仅 modem / 仅 uplink / 仅空 stringArray。
+ */
+HWTEST_F(BranchTest, DataConnectionManager_BandWidthsConfig_003, Function | MediumTest | Level3)
+{
+    ScopedCoreMockZb core;
+    DataConnectionManager con { 0 };
+    // A) 全键缺失 → 三处 find==end → 默认带宽表
+    ON_CALL(*core.simMock_, GetOperatorConfigs(_, _)).WillByDefault([](int32_t, OperatorConfig &) {
+        return 0;
+    });
+    con.GetDefaultBandWidthsConfig();
+    EXPECT_TRUE(con.IsBandwidthSourceModem());
+    // B) 仅 modem 键（false）→ L348 命中、L351/L356 缺失
+    ON_CALL(*core.simMock_, GetOperatorConfigs(_, _))
+        .WillByDefault([](int32_t, OperatorConfig &poc) {
+            poc.boolValue[KEY_BANDWIDTH_SOURCE_USE_MODEM_BOOL] = false;
+            return 0;
+        });
+    con.GetDefaultBandWidthsConfig();
+    EXPECT_FALSE(con.IsBandwidthSourceModem());
+    // C) 仅 uplink 键 → L351 命中、L348/L356 缺失
+    ON_CALL(*core.simMock_, GetOperatorConfigs(_, _))
+        .WillByDefault([](int32_t, OperatorConfig &poc) {
+            poc.boolValue[KEY_UPLINK_BANDWIDTH_NR_NSA_USE_LTE_VALUE_BOOL] = true;
+            return 0;
+        });
+    con.GetDefaultBandWidthsConfig();
+    // D) 仅空 stringArray 键 → L356 命中 + L359 empty → 默认 split
+    ON_CALL(*core.simMock_, GetOperatorConfigs(_, _))
+        .WillByDefault([](int32_t, OperatorConfig &poc) {
+            poc.stringArrayValue[KEY_BANDWIDTH_STRING_ARRAY] = std::vector<std::string> {};
+            return 0;
+        });
+    con.GetDefaultBandWidthsConfig();
 }
 } // namespace Telephony
 } // namespace OHOS

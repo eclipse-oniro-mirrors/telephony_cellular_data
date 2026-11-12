@@ -21,6 +21,15 @@
 #include "cellular_data_handler.h"
 #include "cellular_data_controller.h"
 #include "utils/test_async_utils.h"
+#include <gmock/gmock.h>
+#include "core_manager_inner.h"
+#include "cellular_data_settings_rdb_helper.h"
+#include "data_switch_settings.h"
+#include "operator_config_types.h"
+#include "mock/mock_data_share_helper.h"
+#include "mock/mock_data_share_result_set.h"
+#include "mock/mock_sim_manager.h"
+#include "utils/scoped_setter.h"
 #ifdef BASE_POWER_IMPROVEMENT
 #include "cellular_data_power_save_mode_subscriber.h"
 #endif
@@ -1349,6 +1358,308 @@ HWTEST_F(CellularDataHandlerTest, IsBlockSetRilAttachApn_001, Function | MediumT
  
     cellularDataHandler->lastNumeric_ = "99999";
     EXPECT_FALSE(cellularDataHandler->IsBlockSetRilAttachApn());
+}
+
+/*
+ * ==================== P2 batch-1：handler 直调 + mock 注入用例 ====================
+ * 约定：
+ * - 所有 mock 经 ScopedSetter 注入单例成员（CoreManagerInner::simManager_、
+ *   CellularDataSettingsRdbHelper::settingsHelper_），离开作用域自动还原原值，用例间零污染；
+ * - 只覆盖真机安全分支：UpdateApnInfo 深路径（CreatorDataShareHelper 经真 SA 写真库）、
+ *   SetRilAttachApn happy path（真机 SetInitApnInfo 无线电写）按 P3 纪律禁入；
+ * - Register/UnRegisterDataSettingObserver 全路径中 settings 部分走 mock，
+ *   rdb 单例部分真机注册后同用例内成对注销，副作用净零。
+ */
+using namespace testing;
+
+/**
+ * @tc.number: CellularDataHandler_GetCurrentDataShareApnInfo_001
+ * @tc.name: Test GetCurrentDataShareApnInfo with null query result
+ * @tc.desc: Verify GetCurrentDataShareApnInfo returns false when Query returns nullptr
+ */
+HWTEST_F(CellularDataHandlerTest, GetCurrentDataShareApnInfo_001, Function | MediumTest | Level3)
+{
+    auto mockHelper = std::make_shared<MockDataShareHelper>();
+    ON_CALL(*mockHelper, Query(_, _, _, _)).WillByDefault(Return(nullptr));
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
+    int32_t profileId = -1;
+    EXPECT_FALSE(cellularDataHandler->GetCurrentDataShareApnInfo(mockHelper, 1, profileId));
+    EXPECT_EQ(profileId, -1);
+}
+
+/**
+ * @tc.number: CellularDataHandler_GetCurrentDataShareApnInfo_002
+ * @tc.name: Test GetCurrentDataShareApnInfo with empty result set
+ * @tc.desc: Verify GetCurrentDataShareApnInfo returns false when row count is zero
+ */
+HWTEST_F(CellularDataHandlerTest, GetCurrentDataShareApnInfo_002, Function | MediumTest | Level3)
+{
+    auto mockResult = std::make_shared<DataShareResultSetMock>();
+    std::shared_ptr<DataShare::DataShareResultSet> result = mockResult;
+    ON_CALL(*mockResult, GetRowCount(_)).WillByDefault(DoAll(SetArgReferee<0>(0), Return(0)));
+    ON_CALL(*mockResult, Close()).WillByDefault(Return(0));
+    auto mockHelper = std::make_shared<MockDataShareHelper>();
+    ON_CALL(*mockHelper, Query(_, _, _, _)).WillByDefault(Return(result));
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
+    int32_t profileId = -1;
+    EXPECT_FALSE(cellularDataHandler->GetCurrentDataShareApnInfo(mockHelper, 1, profileId));
+    EXPECT_EQ(profileId, -1);
+}
+
+/**
+ * @tc.number: CellularDataHandler_GetCurrentDataShareApnInfo_003
+ * @tc.name: Test GetCurrentDataShareApnInfo with valid row
+ * @tc.desc: Verify GetCurrentDataShareApnInfo returns true and reads profileId from the result set
+ */
+HWTEST_F(CellularDataHandlerTest, GetCurrentDataShareApnInfo_003, Function | MediumTest | Level3)
+{
+    auto mockResult = std::make_shared<DataShareResultSetMock>();
+    std::shared_ptr<DataShare::DataShareResultSet> result = mockResult;
+    ON_CALL(*mockResult, GetRowCount(_)).WillByDefault(DoAll(SetArgReferee<0>(1), Return(0)));
+    ON_CALL(*mockResult, GoToFirstRow()).WillByDefault(Return(0));
+    ON_CALL(*mockResult, GetColumnIndex(_, _)).WillByDefault(DoAll(SetArgReferee<1>(0), Return(0)));
+    ON_CALL(*mockResult, GetInt(_, _)).WillByDefault(DoAll(SetArgReferee<1>(7), Return(0)));
+    ON_CALL(*mockResult, Close()).WillByDefault(Return(0));
+    auto mockHelper = std::make_shared<MockDataShareHelper>();
+    ON_CALL(*mockHelper, Query(_, _, _, _)).WillByDefault(Return(result));
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
+    int32_t profileId = 0;
+    EXPECT_TRUE(cellularDataHandler->GetCurrentDataShareApnInfo(mockHelper, 1, profileId));
+    EXPECT_EQ(profileId, 7);
+}
+
+/**
+ * @tc.number: CellularDataHandler_UpdateApnInfo_001
+ * @tc.name: Test UpdateApnInfo with invalid sim id
+ * @tc.desc: Verify UpdateApnInfo returns early when GetSimId is invalid, without touching DataShare
+ */
+HWTEST_F(CellularDataHandlerTest, UpdateApnInfo_001, Function | MediumTest | Level3)
+{
+    auto mockSim = std::make_shared<MockSimManager>();
+    ON_CALL(*mockSim, GetSimId(_)).WillByDefault(Return(0)); // INVALID_SIM_ID
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
+    cellularDataHandler->UpdateApnInfo(1); // 深路径写真库，禁入；仅覆盖 simId 无效早退分支
+    SUCCEED();
+}
+
+/**
+ * @tc.number: CellularDataHandler_SetRilAttachApn_001
+ * @tc.name: Test SetRilAttachApn with sim not ready
+ * @tc.desc: Verify SetRilAttachApn returns early when sim state is unknown
+ */
+HWTEST_F(CellularDataHandlerTest, SetRilAttachApn_001, Function | MediumTest | Level3)
+{
+    auto mockSim = std::make_shared<MockSimManager>();
+    ON_CALL(*mockSim, GetSimOperatorNumeric(_, _)).WillByDefault(Return(0));
+    EXPECT_CALL(*mockSim, GetSimState(_, _))
+        .WillOnce(DoAll(SetArgReferee<1>(SimState::SIM_STATE_UNKNOWN), Return(0)));
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
+    cellularDataHandler->SetRilAttachApn();
+    SUCCEED();
+}
+
+/**
+ * @tc.number: CellularDataHandler_SetRilAttachApn_002
+ * @tc.name: Test SetRilAttachApn with esm flag and null attach apn
+ * @tc.desc: Verify SetRilAttachApn returns early when esm flag is set but GetRilAttachApn returns null
+ */
+HWTEST_F(CellularDataHandlerTest, SetRilAttachApn_002, Function | MediumTest | Level3)
+{
+    auto mockSim = std::make_shared<MockSimManager>();
+    ON_CALL(*mockSim, GetSimOperatorNumeric(_, _)).WillByDefault(Return(0));
+    EXPECT_CALL(*mockSim, GetSimState(_, _))
+        .WillOnce(DoAll(SetArgReferee<1>(SimState::SIM_STATE_READY), Return(0)));
+    // OperatorConfig 含 const 成员（拷贝赋值被删除），无法 SetArgReferee，改用 Invoke 直写 map
+    EXPECT_CALL(*mockSim, GetOperatorConfigs(_, _)).WillOnce(Invoke([](int, OperatorConfig &poc) {
+        poc.intValue[KEY_PLMN_ESM_FLAG_INT] = 1;
+        return 0;
+    }));
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
+    // 非 Init 时 apnManager_ 为空（Init 才创建，见 Init 行 61-75）；此处手动挂新鲜 ApnManager
+    // （allApnItem_ 空）→ GetRilAttachApn 返 null → 早退，不触达真机 SetInitApnInfo 无线电写
+    cellularDataHandler->apnManager_ = sptr<ApnManager>::MakeSptr();
+    cellularDataHandler->SetRilAttachApn();
+    SUCCEED();
+}
+
+/**
+ * @tc.number: CellularDataHandler_GetDefaultDataRoamingConfig_001
+ * @tc.name: Test GetDefaultDataRoamingConfig with opconfig key present
+ * @tc.desc: Verify defaultDataRoamingEnable_ is set from operator config when dataSwitchSettings_ is null
+ */
+HWTEST_F(CellularDataHandlerTest, GetDefaultDataRoamingConfig_001, Function | MediumTest | Level3)
+{
+    auto mockSim = std::make_shared<MockSimManager>();
+    EXPECT_CALL(*mockSim, GetOperatorConfigs(_, _)).WillOnce(Invoke([](int, OperatorConfig &poc) {
+        poc.boolValue[KEY_DEFAULT_DATA_ROAMING_BOOL] = true;
+        return 0;
+    }));
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0); // 非 Init：dataSwitchSettings_ 为空
+    cellularDataHandler->GetDefaultDataRoamingConfig();
+    EXPECT_TRUE(cellularDataHandler->defaultDataRoamingEnable_);
+    EXPECT_EQ(cellularDataHandler->dataSwitchSettings_, nullptr);
+}
+
+/**
+ * @tc.number: CellularDataHandler_GetDefaultDataRoamingConfig_002
+ * @tc.name: Test GetDefaultDataRoamingConfig with opconfig key absent
+ * @tc.desc: Verify defaultDataRoamingEnable_ falls back to system property when the key is absent
+ */
+HWTEST_F(CellularDataHandlerTest, GetDefaultDataRoamingConfig_002, Function | MediumTest | Level3)
+{
+    auto mockSim = std::make_shared<MockSimManager>();
+    EXPECT_CALL(*mockSim, GetOperatorConfigs(_, _)).WillOnce(Invoke([](int, OperatorConfig &) { return 0; }));
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
+    cellularDataHandler->GetDefaultDataRoamingConfig(); // KEY 缺失 → 系统属性路径（默认 DISABLED）
+    EXPECT_FALSE(cellularDataHandler->defaultDataRoamingEnable_);
+}
+
+/**
+ * @tc.number: CellularDataHandler_GetDefaultDataRoamingConfig_003
+ * @tc.name: Test GetDefaultDataRoamingConfig update path with null apn manager
+ * @tc.desc: Verify roaming switch is updated when query fails and apnManager_ is null
+ */
+HWTEST_F(CellularDataHandlerTest, GetDefaultDataRoamingConfig_003, Function | MediumTest | Level3)
+{
+    auto mockSim = std::make_shared<MockSimManager>();
+    ON_CALL(*mockSim, GetSimId(_)).WillByDefault(Return(1));
+    EXPECT_CALL(*mockSim, GetOperatorConfigs(_, _)).WillOnce(Invoke([](int, OperatorConfig &poc) {
+        poc.boolValue[KEY_DEFAULT_DATA_ROAMING_BOOL] = true;
+        return 0;
+    }));
+    auto mockHelper = std::make_shared<MockDataShareHelper>();
+    ON_CALL(*mockHelper, Query(_, _, _, _)).WillByDefault(Return(nullptr)); // GetValue → DATABASE_READ_FAIL
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+    ScopedSetter<std::shared_ptr<DataShare::DataShareHelper>> settingsGuard(
+        CellularDataSettingsRdbHelper::GetInstance()->settingsHelper_, mockHelper);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
+    cellularDataHandler->dataSwitchSettings_ = std::make_unique<DataSwitchSettings>(0);
+    cellularDataHandler->apnManager_ = nullptr; // 命中 apnManager_ 空早退分支
+    cellularDataHandler->GetDefaultDataRoamingConfig();
+    EXPECT_TRUE(cellularDataHandler->dataSwitchSettings_->IsUserDataRoamingOn());
+}
+
+/**
+ * @tc.number: CellularDataHandler_GetDefaultDataRoamingConfig_004
+ * @tc.name: Test GetDefaultDataRoamingConfig update path when not roaming
+ * @tc.desc: Verify roaming switch is updated and not-roaming branch is taken when GetPsRoamingState fails
+ */
+HWTEST_F(CellularDataHandlerTest, GetDefaultDataRoamingConfig_004, Function | MediumTest | Level3)
+{
+    auto mockSim = std::make_shared<MockSimManager>();
+    ON_CALL(*mockSim, GetSimId(_)).WillByDefault(Return(1));
+    EXPECT_CALL(*mockSim, GetOperatorConfigs(_, _)).WillOnce(Invoke([](int, OperatorConfig &poc) {
+        poc.boolValue[KEY_DEFAULT_DATA_ROAMING_BOOL] = true;
+        return 0;
+    }));
+    auto mockHelper = std::make_shared<MockDataShareHelper>();
+    ON_CALL(*mockHelper, Query(_, _, _, _)).WillByDefault(Return(nullptr));
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+    ScopedSetter<std::shared_ptr<DataShare::DataShareHelper>> settingsGuard(
+        CellularDataSettingsRdbHelper::GetInstance()->settingsHelper_, mockHelper);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
+    cellularDataHandler->dataSwitchSettings_ = std::make_unique<DataSwitchSettings>(0);
+    // 手动挂新鲜 ApnManager（非 Init 时为空）；测试进程 networkSearchManager_ 为空 → GetPsRoamingState
+    // 返回 -1 → 非漫游分支
+    cellularDataHandler->apnManager_ = sptr<ApnManager>::MakeSptr();
+    cellularDataHandler->GetDefaultDataRoamingConfig();
+    EXPECT_TRUE(cellularDataHandler->dataSwitchSettings_->IsUserDataRoamingOn());
+}
+
+/**
+ * @tc.number: CellularDataHandler_RegisterDataSettingObserver_001
+ * @tc.name: Test RegisterDataSettingObserver with null observer
+ * @tc.desc: Verify RegisterDataSettingObserver returns early when any observer is null
+ */
+HWTEST_F(CellularDataHandlerTest, RegisterDataSettingObserver_001, Function | MediumTest | Level3)
+{
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
+    // observer 五件套在 Init 创建，未 Init 时本就为空 → 走空早退分支
+    EXPECT_EQ(cellularDataHandler->settingObserver_, nullptr);
+    cellularDataHandler->RegisterDataSettingObserver();
+    SUCCEED();
+}
+
+/**
+ * @tc.number: CellularDataHandler_RegisterDataSettingObserver_002
+ * @tc.name: Test RegisterDataSettingObserver with invalid sim id
+ * @tc.desc: Verify only the data enable observer is registered when GetSimId is invalid
+ */
+HWTEST_F(CellularDataHandlerTest, RegisterDataSettingObserver_002, Function | MediumTest | Level3)
+{
+    auto mockSim = std::make_shared<MockSimManager>();
+    ON_CALL(*mockSim, GetSimId(_)).WillByDefault(Return(0));
+    auto mockHelper = std::make_shared<MockDataShareHelper>();
+    EXPECT_CALL(*mockHelper, RegisterObserver(_, _)).Times(1).WillOnce(Return(0));
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+    ScopedSetter<std::shared_ptr<DataShare::DataShareHelper>> settingsGuard(
+        CellularDataSettingsRdbHelper::GetInstance()->settingsHelper_, mockHelper);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
+    cellularDataHandler->Init(); // observer 五件套在 Init 创建（未 Init 为空会走早退分支）
+    cellularDataHandler->RegisterDataSettingObserver(); // dataEnable 注册后 simId 无效早退
+    SUCCEED();
+}
+
+/**
+ * @tc.number: CellularDataHandler_RegisterDataSettingObserver_003
+ * @tc.name: Test RegisterDataSettingObserver full path with paired unregister
+ * @tc.desc: Verify all settings observers are registered and unregistered; rdb part is paired to net zero
+ */
+HWTEST_F(CellularDataHandlerTest, RegisterDataSettingObserver_003, Function | MediumTest | Level3)
+{
+    auto mockSim = std::make_shared<MockSimManager>();
+    ON_CALL(*mockSim, GetSimId(_)).WillByDefault(Return(1));
+    auto mockHelper = std::make_shared<MockDataShareHelper>();
+    EXPECT_CALL(*mockHelper, RegisterObserver(_, _)).Times(4).WillRepeatedly(Return(0));
+    EXPECT_CALL(*mockHelper, UnregisterObserver(_, _)).Times(4).WillRepeatedly(Return(0));
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+    ScopedSetter<std::shared_ptr<DataShare::DataShareHelper>> settingsGuard(
+        CellularDataSettingsRdbHelper::GetInstance()->settingsHelper_, mockHelper);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
+    cellularDataHandler->Init(); // observer 五件套在 Init 创建
+    // settings 部分走 mock；rdb 单例部分真机注册后同用例内成对注销，副作用净零
+    cellularDataHandler->RegisterDataSettingObserver();
+    cellularDataHandler->UnRegisterDataSettingObserver();
+    SUCCEED();
+}
+
+/**
+ * @tc.number: CellularDataHandler_UnRegisterDataSettingObserver_001
+ * @tc.name: Test UnRegisterDataSettingObserver with null observer
+ * @tc.desc: Verify UnRegisterDataSettingObserver returns early when any observer is null
+ */
+HWTEST_F(CellularDataHandlerTest, UnRegisterDataSettingObserver_001, Function | MediumTest | Level3)
+{
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
+    // observer 五件套在 Init 创建，未 Init 时本就为空 → 走空早退分支
+    EXPECT_EQ(cellularDataHandler->roamingObserver_, nullptr);
+    cellularDataHandler->UnRegisterDataSettingObserver();
+    SUCCEED();
+}
+
+/**
+ * @tc.number: CellularDataHandler_UnRegisterDataSettingObserver_002
+ * @tc.name: Test UnRegisterDataSettingObserver with invalid sim id
+ * @tc.desc: Verify only the data enable observer is unregistered when GetSimId is invalid
+ */
+HWTEST_F(CellularDataHandlerTest, UnRegisterDataSettingObserver_002, Function | MediumTest | Level3)
+{
+    auto mockSim = std::make_shared<MockSimManager>();
+    ON_CALL(*mockSim, GetSimId(_)).WillByDefault(Return(0));
+    auto mockHelper = std::make_shared<MockDataShareHelper>();
+    EXPECT_CALL(*mockHelper, UnregisterObserver(_, _)).Times(1).WillOnce(Return(0));
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+    ScopedSetter<std::shared_ptr<DataShare::DataShareHelper>> settingsGuard(
+        CellularDataSettingsRdbHelper::GetInstance()->settingsHelper_, mockHelper);
+    auto cellularDataHandler = TestAsyncUtils::MakeDrainedHandler(0);
+    cellularDataHandler->Init(); // observer 五件套在 Init 创建（未 Init 为空会走早退分支）
+    cellularDataHandler->UnRegisterDataSettingObserver(); // dataEnable 注销后 simId 无效早退
+    SUCCEED();
 }
 
 } // namespace Telephony

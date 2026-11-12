@@ -18,6 +18,7 @@
 #include <gmock/gmock.h>
 
 #include "cellular_data_error.h"
+#include "cellular_data_rdb_helper.h"
 #include "cellular_data_service.h"
 #include "core_manager_inner.h"
 #include "data_access_token.h"
@@ -27,10 +28,12 @@
 #include "traffic_management.h"
 #include "apn_attribute.h"
 #include "mock/mock_network_search.h"
+#include "mock/mock_sim_manager.h"
 #include "mock/mock_telephony_permission.h"
 #include "telephony_permission.h"
 #include "telephony_ext_wrapper.h"
 #include "utils/test_async_utils.h"
+#include "utils/scoped_setter.h"
 
 namespace OHOS {
 namespace Telephony {
@@ -692,6 +695,597 @@ HWTEST_F(CellularDataServiceTest, SetDefaultCellularDataSlotId_SendSlotChangeInf
     service->SendSlotChangeInfoToChr(slotId);
     TELEPHONY_EXT_WRAPPER.sendCellularDataSlotChangeInfo_ = nullptr;
     EXPECT_TRUE(g_callbackInvoked);
+}
+
+/**
+ * @tc.number   EnableCellularData_003
+ * @tc.name     non-system app / no controller / EDM force_open / EDM disallow / no policy
+ * @tc.desc     Function test
+ */
+HWTEST_F(CellularDataServiceTest, EnableCellularData_003, TestSize.Level1)
+{
+    // A) 非系统应用（CheckCallerIsSystemApp mock 默认拒绝）→ ILLEGAL_USE_OF_SYSTEM_API
+    EXPECT_EQ(service->EnableCellularData(false), TELEPHONY_ERR_ILLEGAL_USE_OF_SYSTEM_API);
+    // B) 系统应用 + SET_TELEPHONY_STATE 放行 + 无 controller（本用例先于 InitModule 类用例执行）→ LOCAL_PTR_NULL
+    auto permissionMock = MockTelephonyPermission::GetOrCreateMockTelephonyPermission();
+    ON_CALL(*permissionMock, CheckCallerIsSystemApp()).WillByDefault(Return(true));
+    ON_CALL(*permissionMock, CheckPermission(Eq(std::string(Permission::SET_TELEPHONY_STATE))))
+        .WillByDefault(Return(true));
+    EXPECT_EQ(service->EnableCellularData(false), TELEPHONY_ERR_LOCAL_PTR_NULL);
+    // C) InitModule 建 controller（AddNetSupplier 为本地容器操作）+ EDM force_open 禁关闭 → POLICY_DISABLED
+    service->isInitSuccess_ = true;
+    service->InitModule();
+    std::string origEdm = system::GetParameter("persist.edm.mobile_data_policy", "");
+    system::SetParameter("persist.edm.mobile_data_policy", "force_open");
+    EXPECT_EQ(service->EnableCellularData(false), TELEPHONY_ERR_POLICY_DISABLED);
+    // D) EDM disallow 禁开启 → POLICY_DISABLED
+    system::SetParameter("persist.edm.mobile_data_policy", "disallow");
+    EXPECT_EQ(service->EnableCellularData(true), TELEPHONY_ERR_POLICY_DISABLED);
+    // E) 无策略 → controller->SetCellularDataEnable（handler 未 Init → LOCAL_PTR_NULL）
+    system::SetParameter("persist.edm.mobile_data_policy", origEdm);
+    EXPECT_EQ(service->EnableCellularData(false), TELEPHONY_ERR_LOCAL_PTR_NULL);
+}
+
+/**
+ * @tc.number   InitModule_001
+ * @tc.name     init module creates controllers per slot with TSTS disabled
+ * @tc.desc     Function test
+ */
+HWTEST_F(CellularDataServiceTest, InitModule_001, TestSize.Level1)
+{
+    service->isInitSuccess_ = true;
+    std::string origTsts = system::GetParameter(PERSIST_TSTS_MODE, TSTS_MODE_DEFAULT_VALUE);
+    system::SetParameter(PERSIST_TSTS_MODE, "0");
+    service->InitModule();
+    system::SetParameter(PERSIST_TSTS_MODE, origTsts);
+    // slot0 恒被初始化（SIM_SLOT_COUNT_MD 为系统参数，设备值不定，只断言确定项）
+    EXPECT_NE(service->GetCellularDataController(DEFAULT_SIM_SLOT_ID), nullptr);
+}
+
+/**
+ * @tc.number   InitModule_TSTS_002
+ * @tc.name     TSTS mode additionally initializes CELLDATA_SLOT_ID_3 controller
+ * @tc.desc     Function test
+ */
+HWTEST_F(CellularDataServiceTest, InitModule_TSTS_002, TestSize.Level1)
+{
+    service->isInitSuccess_ = true;
+    std::string origTsts = system::GetParameter(PERSIST_TSTS_MODE, TSTS_MODE_DEFAULT_VALUE);
+    system::SetParameter(PERSIST_TSTS_MODE, "1");
+    service->InitModule();
+    system::SetParameter(PERSIST_TSTS_MODE, origTsts);
+    // TSTS 分支在主循环外显式 AddNetSupplier(CELLDATA_SLOT_ID_3)，与 slot count 参数无关
+    EXPECT_NE(service->GetCellularDataController(CELLDATA_SLOT_ID_3), nullptr);
+}
+
+/**
+ * @tc.number   DumpWithController_001
+ * @tc.name     status/flow dumps take the with-controller path
+ * @tc.desc     Function test
+ */
+HWTEST_F(CellularDataServiceTest, DumpWithController_001, TestSize.Level1)
+{
+    service->isInitSuccess_ = true;
+    auto mockSim = std::make_shared<MockSimManager>();
+    ON_CALL(*mockSim, GetDefaultCellularDataSlotId()).WillByDefault(Return(0));
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+    service->InitModule();
+    // controller 存在但 handler 未 Init → GetCellularDataState 返回 FAILED、flow 返回 NONE，dump 输出状态行
+    EXPECT_NE(service->GetStateMachineCurrentStatusDump(), "");
+    EXPECT_NE(service->GetFlowDataInfoDump(), "");
+}
+
+/**
+ * @tc.number   GetActiveApnName_003
+ * @tc.name     permission denied / granted with non-connected controller
+ * @tc.desc     Function test
+ */
+HWTEST_F(CellularDataServiceTest, GetActiveApnName_003, TestSize.Level1)
+{
+    // A) GET_NETWORK_INFO 默认拒绝 → PERMISSION_ERR
+    std::string apnName = "init";
+    EXPECT_EQ(service->GetActiveApnName(apnName), TELEPHONY_ERR_PERMISSION_ERR);
+    // B) 放行 + 默认卡 0 controller 存在（状态非 CONNECTED）→ 0 且 apnName 被清空
+    auto permissionMock = MockTelephonyPermission::GetOrCreateMockTelephonyPermission();
+    ON_CALL(*permissionMock, CheckPermission(Eq(std::string(Permission::GET_NETWORK_INFO))))
+        .WillByDefault(Return(true));
+    service->isInitSuccess_ = true;
+    auto mockSim = std::make_shared<MockSimManager>();
+    ON_CALL(*mockSim, GetDefaultCellularDataSlotId()).WillByDefault(Return(0));
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+    service->InitModule();
+    EXPECT_EQ(service->GetActiveApnName(apnName), 0);
+    EXPECT_EQ(apnName, "");
+}
+
+/**
+ * @tc.number   SetDefaultCellularDataSlotId_EarlyExit_V1
+ * @tc.name     test SetDefaultCellularDataSlotId with permission denied
+ * @tc.desc     系统应用校验通过但 SET_TELEPHONY_STATE 权限拒绝 → PERMISSION_ERR
+ */
+HWTEST_F(CellularDataServiceTest, SetDefaultCellularDataSlotId_EarlyExit_V1, TestSize.Level0)
+{
+    auto permissionMock = MockTelephonyPermission::GetOrCreateMockTelephonyPermission();
+    ON_CALL(*permissionMock, CheckCallerIsSystemApp()).WillByDefault(Return(true));
+    // CheckPermission 未配置 → 默认拒绝
+    EXPECT_EQ(service->SetDefaultCellularDataSlotId(0), TELEPHONY_ERR_PERMISSION_ERR);
+}
+
+/**
+ * @tc.number   SetDefaultCellularDataSlotId_EarlyExit_V2
+ * @tc.name     test SetDefaultCellularDataSlotId without sim card
+ * @tc.desc     权限放行 + 无 simManager（HasSimCard 失败）→ NO_SIM_CARD
+ */
+HWTEST_F(CellularDataServiceTest, SetDefaultCellularDataSlotId_EarlyExit_V2, TestSize.Level0)
+{
+    auto permissionMock = MockTelephonyPermission::GetOrCreateMockTelephonyPermission();
+    ON_CALL(*permissionMock, CheckCallerIsSystemApp()).WillByDefault(Return(true));
+    ON_CALL(*permissionMock, CheckPermission(Eq(std::string(Permission::SET_TELEPHONY_STATE))))
+        .WillByDefault(Return(true));
+    EXPECT_EQ(service->SetDefaultCellularDataSlotId(0), TELEPHONY_ERR_NO_SIM_CARD);
+}
+
+/**
+ * @tc.number   SetDefaultCellularDataSlotId_EarlyExit_V3
+ * @tc.name     test SetDefaultCellularDataSlotId with inactive sim
+ * @tc.desc     有 SIM 但未激活 → SLOTID_INVALID
+ */
+HWTEST_F(CellularDataServiceTest, SetDefaultCellularDataSlotId_EarlyExit_V3, TestSize.Level0)
+{
+    auto permissionMock = MockTelephonyPermission::GetOrCreateMockTelephonyPermission();
+    ON_CALL(*permissionMock, CheckCallerIsSystemApp()).WillByDefault(Return(true));
+    ON_CALL(*permissionMock, CheckPermission(Eq(std::string(Permission::SET_TELEPHONY_STATE))))
+        .WillByDefault(Return(true));
+    auto mockSim = std::make_shared<MockSimManager>();
+    ON_CALL(*mockSim, HasSimCard(_, _))
+        .WillByDefault(DoAll(SetArgReferee<1>(true), Return(0)));
+    ON_CALL(*mockSim, IsSimActive(_)).WillByDefault(Return(false));
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+    EXPECT_EQ(service->SetDefaultCellularDataSlotId(0), TELEPHONY_ERR_SLOTID_INVALID);
+}
+
+/**
+ * @tc.number   SetDefaultCellularDataSlotId_EarlyExit_V4
+ * @tc.name     test SetDefaultCellularDataSlotId with former slot negative and set failure
+ * @tc.desc     旧默认卡为负（仅日志）+ SetDefaultCellularDataSlotId 失败 → 透传失败码
+ */
+HWTEST_F(CellularDataServiceTest, SetDefaultCellularDataSlotId_EarlyExit_V4, TestSize.Level0)
+{
+    auto permissionMock = MockTelephonyPermission::GetOrCreateMockTelephonyPermission();
+    ON_CALL(*permissionMock, CheckCallerIsSystemApp()).WillByDefault(Return(true));
+    ON_CALL(*permissionMock, CheckPermission(Eq(std::string(Permission::SET_TELEPHONY_STATE))))
+        .WillByDefault(Return(true));
+    auto mockSim = std::make_shared<MockSimManager>();
+    ON_CALL(*mockSim, HasSimCard(_, _))
+        .WillByDefault(DoAll(SetArgReferee<1>(true), Return(0)));
+    ON_CALL(*mockSim, IsSimActive(_)).WillByDefault(Return(true));
+    ON_CALL(*mockSim, GetDefaultCellularDataSlotId()).WillByDefault(Return(-1));
+    ON_CALL(*mockSim, SetDefaultCellularDataSlotId(_)).WillByDefault(Return(TELEPHONY_ERR_SLOTID_INVALID));
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+    // 屏蔽 CHR 上报钩子，避免真机 vendor 扩展真实调用
+    TELEPHONY_EXT_WRAPPER.sendCellularDataSlotChangeInfo_ = nullptr;
+    EXPECT_EQ(service->SetDefaultCellularDataSlotId(0), TELEPHONY_ERR_SLOTID_INVALID);
+}
+
+/**
+ * @tc.number   GetCellularDataState_AllowNoController
+ * @tc.name     test GetCellularDataState with permission allowed but no controller
+ * @tc.desc     GET_NETWORK_INFO 放行 + 默认卡指向无 controller 的 slot → INVALID_PARAM
+ */
+HWTEST_F(CellularDataServiceTest, GetCellularDataState_AllowNoController, TestSize.Level0)
+{
+    auto permissionMock = MockTelephonyPermission::GetOrCreateMockTelephonyPermission();
+    ON_CALL(*permissionMock, CheckPermission(Eq(std::string(Permission::GET_NETWORK_INFO))))
+        .WillByDefault(Return(true));
+    auto mockSim = std::make_shared<MockSimManager>();
+    ON_CALL(*mockSim, GetDefaultCellularDataSlotId()).WillByDefault(Return(99));
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+    int32_t state = -1;
+    EXPECT_EQ(service->GetCellularDataState(state), CELLULAR_DATA_INVALID_PARAM);
+}
+
+/**
+ * @tc.number   GetCellularDataFlowType_AllowNoController
+ * @tc.name     test GetCellularDataFlowType with permission allowed but no controller
+ * @tc.desc     GET_NETWORK_INFO 放行 + 默认卡指向无 controller 的 slot → INVALID_PARAM
+ */
+HWTEST_F(CellularDataServiceTest, GetCellularDataFlowType_AllowNoController, TestSize.Level0)
+{
+    auto permissionMock = MockTelephonyPermission::GetOrCreateMockTelephonyPermission();
+    ON_CALL(*permissionMock, CheckPermission(Eq(std::string(Permission::GET_NETWORK_INFO))))
+        .WillByDefault(Return(true));
+    auto mockSim = std::make_shared<MockSimManager>();
+    ON_CALL(*mockSim, GetDefaultCellularDataSlotId()).WillByDefault(Return(99));
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+    int32_t type = -1;
+    EXPECT_EQ(service->GetCellularDataFlowType(type), CELLULAR_DATA_INVALID_PARAM);
+}
+
+/**
+ * @tc.number   EstablishAllApnsIfConnectable_EarlyExit
+ * @tc.name     test EstablishAllApnsIfConnectable early exits
+ * @tc.desc     权限放行后：无 controller → INVALID_PARAM；有 controller 无 SIM → NO_SIM_CARD；
+ *              有 SIM 未激活 → SLOTID_INVALID
+ */
+HWTEST_F(CellularDataServiceTest, EstablishAllApnsIfConnectable_EarlyExit, TestSize.Level0)
+{
+    auto permissionMock = MockTelephonyPermission::GetOrCreateMockTelephonyPermission();
+    ON_CALL(*permissionMock, CheckPermission(Eq(std::string(Permission::SET_TELEPHONY_STATE))))
+        .WillByDefault(Return(true));
+    // 服务初始化标记置位（不依赖 InitModule 类用例的执行顺序），GetCellularDataController 才会查表
+    service->isInitSuccess_ = true;
+    // 1) slot 99 无 controller → INVALID_PARAM
+    EXPECT_EQ(service->EstablishAllApnsIfConnectable(99), CELLULAR_DATA_INVALID_PARAM);
+    // 2) slot 99 注入 controller + 无 SIM（simManager 为空 → HasSimCard 失败）→ NO_SIM_CARD
+    auto controller = std::make_shared<CellularDataController>(99);
+    service->cellularDataControllers_[99] = controller;
+    EXPECT_EQ(service->EstablishAllApnsIfConnectable(99), TELEPHONY_ERR_NO_SIM_CARD);
+    // 3) 有 SIM 但未激活 → SLOTID_INVALID
+    auto mockSim = std::make_shared<MockSimManager>();
+    ON_CALL(*mockSim, HasSimCard(_, _))
+        .WillByDefault(DoAll(SetArgReferee<1>(true), Return(0)));
+    ON_CALL(*mockSim, IsSimActive(_)).WillByDefault(Return(false));
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+    EXPECT_EQ(service->EstablishAllApnsIfConnectable(99), TELEPHONY_ERR_SLOTID_INVALID);
+    // 还原：排空事件队列后移除注入的 controller
+    TestAsyncUtils::DrainTelEventHandler(controller.get());
+    service->cellularDataControllers_.erase(99);
+}
+
+/**
+ * @tc.number   GetActiveApnName_NoController
+ * @tc.name     test GetActiveApnName with permission allowed but no controller
+ * @tc.desc     GET_NETWORK_INFO 放行 + 默认卡指向无 controller 的 slot → 返回 0 且 apnName 为空
+ */
+HWTEST_F(CellularDataServiceTest, GetActiveApnName_NoController, TestSize.Level0)
+{
+    auto permissionMock = MockTelephonyPermission::GetOrCreateMockTelephonyPermission();
+    ON_CALL(*permissionMock, CheckPermission(Eq(std::string(Permission::GET_NETWORK_INFO))))
+        .WillByDefault(Return(true));
+    auto mockSim = std::make_shared<MockSimManager>();
+    ON_CALL(*mockSim, GetDefaultCellularDataSlotId()).WillByDefault(Return(99));
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+    std::string apnName = "preset";
+    EXPECT_EQ(service->GetActiveApnName(apnName), 0);
+    EXPECT_EQ(apnName, "");
+}
+
+/**
+ * @tc.number   GetCellularDataState_Suspended_001
+ * @tc.name     test GetCellularDataState GSM_AND_CALLING suspended matrix
+ * @tc.desc     controller(99)+注入 handler（disconnectionReason_/lastCallState_ 直改，
+ *              GetPsRadioTech mock 控制制式）覆盖 REASON_GSM_AND_CALLING_ONLY && IsRestrictedMode
+ *              判定的各方向：非 GSM 原因 / GSM 原因但非受限 / GSM 原因且受限（SUSPENDED）。
+ */
+HWTEST_F(CellularDataServiceTest, GetCellularDataState_Suspended_001, TestSize.Level1)
+{
+    auto permissionMock = MockTelephonyPermission::GetOrCreateMockTelephonyPermission();
+    ON_CALL(*permissionMock, CheckPermission(Eq(std::string(Permission::GET_NETWORK_INFO))))
+        .WillByDefault(Return(true));
+    service->isInitSuccess_ = true;
+    auto mockSim = std::make_shared<MockSimManager>();
+    ON_CALL(*mockSim, GetDefaultCellularDataSlotId()).WillByDefault(Return(99));
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+
+    auto controller = std::make_shared<CellularDataController>(99);
+    auto handler = TestAsyncUtils::MakeDrainedHandler(99);
+    controller->cellularDataHandler_ = handler;
+    service->cellularDataControllers_[99] = controller;
+
+    // A) 普通原因（REASON_NORMAL）→ 不进受限判定 → SUCCESS
+    int32_t state = -1;
+    handler->disconnectionReason_ = DisConnectionReason::REASON_NORMAL;
+    EXPECT_EQ(service->GetCellularDataState(state), TELEPHONY_ERR_SUCCESS);
+    // B) GSM 原因但制式非 GSM（LTE）→ IsRestrictedMode false → 正常状态
+    handler->disconnectionReason_ = DisConnectionReason::REASON_GSM_AND_CALLING_ONLY;
+    ON_CALL(*mockNetworkSearchManager, GetPsRadioTech(_, _))
+        .WillByDefault(DoAll(SetArgReferee<1>(static_cast<int32_t>(RadioTech::RADIO_TECHNOLOGY_LTE)), Return(0)));
+    EXPECT_EQ(service->GetCellularDataState(state), TELEPHONY_ERR_SUCCESS);
+    // C) GSM 原因 + GSM 制式 + 通话中 → 受限 → SUSPENDED
+    ON_CALL(*mockNetworkSearchManager, GetPsRadioTech(_, _))
+        .WillByDefault(DoAll(SetArgReferee<1>(static_cast<int32_t>(RadioTech::RADIO_TECHNOLOGY_GSM)), Return(0)));
+    handler->lastCallState_ = static_cast<int32_t>(TelCallStatus::CALL_STATUS_ACTIVE);
+    EXPECT_EQ(service->GetCellularDataState(state), TELEPHONY_ERR_SUCCESS);
+    EXPECT_EQ(state, static_cast<int32_t>(DataConnectionStatus::DATA_STATE_SUSPENDED));
+    // D) GSM 制式但非通话态（IDLE）→ inCall false → 正常状态
+    handler->lastCallState_ = static_cast<int32_t>(TelCallStatus::CALL_STATUS_IDLE);
+    EXPECT_EQ(service->GetCellularDataState(state), TELEPHONY_ERR_SUCCESS);
+
+    service->cellularDataControllers_.erase(99);
+}
+
+/**
+ * @tc.number   GetCellularDataFlowType_Dormant_001
+ * @tc.name     test GetCellularDataFlowType GSM_AND_CALLING dormant matrix
+ * @tc.desc     同 Suspended 矩阵：受限 → DATA_FLOW_TYPE_DORMANT；普通原因 → 走流类型查询。
+ */
+HWTEST_F(CellularDataServiceTest, GetCellularDataFlowType_Dormant_001, TestSize.Level1)
+{
+    auto permissionMock = MockTelephonyPermission::GetOrCreateMockTelephonyPermission();
+    ON_CALL(*permissionMock, CheckPermission(Eq(std::string(Permission::GET_NETWORK_INFO))))
+        .WillByDefault(Return(true));
+    service->isInitSuccess_ = true;
+    auto mockSim = std::make_shared<MockSimManager>();
+    ON_CALL(*mockSim, GetDefaultCellularDataSlotId()).WillByDefault(Return(99));
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+
+    auto controller = std::make_shared<CellularDataController>(99);
+    auto handler = TestAsyncUtils::MakeDrainedHandler(99);
+    controller->cellularDataHandler_ = handler;
+    service->cellularDataControllers_[99] = controller;
+
+    // A) GSM 原因 + GSM 制式 + 通话中 → 受限 → 返回 DORMANT（该函数返回流类型值本身）
+    handler->disconnectionReason_ = DisConnectionReason::REASON_GSM_AND_CALLING_ONLY;
+    ON_CALL(*mockNetworkSearchManager, GetPsRadioTech(_, _))
+        .WillByDefault(DoAll(SetArgReferee<1>(static_cast<int32_t>(RadioTech::RADIO_TECHNOLOGY_GSM)), Return(0)));
+    handler->lastCallState_ = static_cast<int32_t>(TelCallStatus::CALL_STATUS_ACTIVE);
+    int32_t flowType = -1;
+    EXPECT_EQ(service->GetCellularDataFlowType(flowType),
+        static_cast<int32_t>(CellDataFlowType::DATA_FLOW_TYPE_DORMANT));
+    // B) 普通原因 → 走 controller->GetCellularDataFlowType()（handler 未 Init → 默认流类型）
+    handler->disconnectionReason_ = DisConnectionReason::REASON_NORMAL;
+    EXPECT_GE(service->GetCellularDataFlowType(flowType), 0);
+
+    service->cellularDataControllers_.erase(99);
+}
+
+namespace {
+// 最小 rdb stub：CreateDataAbilityHelper 返回空 → QueryPreferApn false（对齐 apn_manager_test 模式）
+class SvcRdbStub : public CellularDataRdbHelper {
+public:
+    SvcRdbStub() = default;
+    ~SvcRdbStub() = default;
+    std::shared_ptr<DataShare::DataShareHelper> CreateDataAbilityHelper(const int waitTime) override
+    {
+        return nullptr;
+    }
+};
+} // namespace
+
+/**
+ * @tc.number   GetActiveApnName_ConnectedRdbNull_001
+ * @tc.name     test GetActiveApnName with connected default apn and null rdb helper
+ * @tc.desc     注入 CONNECTED default holder（handler Init 后取 default holder 置态）+
+ *              rdb 单例注入空 helper stub → 走到 QueryPreferApn 失败早退（L979 真弧）。
+ */
+HWTEST_F(CellularDataServiceTest, GetActiveApnName_ConnectedRdbNull_001, TestSize.Level1)
+{
+    auto permissionMock = MockTelephonyPermission::GetOrCreateMockTelephonyPermission();
+    ON_CALL(*permissionMock, CheckPermission(Eq(std::string(Permission::GET_NETWORK_INFO))))
+        .WillByDefault(Return(true));
+    service->isInitSuccess_ = true;
+    auto mockSim = std::make_shared<MockSimManager>();
+    ON_CALL(*mockSim, GetDefaultCellularDataSlotId()).WillByDefault(Return(99));
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+
+    auto controller = std::make_shared<CellularDataController>(99);
+    auto handler = TestAsyncUtils::MakeDrainedHandler(99);
+    handler->Init();
+    ASSERT_NE(handler->apnManager_, nullptr);
+    sptr<ApnHolder> defaultHolder = handler->apnManager_->GetApnHolder(DATA_CONTEXT_ROLE_DEFAULT);
+    ASSERT_NE(defaultHolder, nullptr);
+    defaultHolder->SetApnState(ApnProfileState::PROFILE_STATE_CONNECTED);
+    controller->cellularDataHandler_ = handler;
+    service->cellularDataControllers_[99] = controller;
+
+    // rdb 单例注入空 helper stub（ScopedSetter 守卫，用例结束还原）
+    auto stub = std::make_shared<SvcRdbStub>();
+    ScopedSetter<std::shared_ptr<CellularDataRdbHelper>> rdbGuard(
+        DelayedSingleton<CellularDataRdbHelper>::instance_, stub);
+
+    std::string apnName = "preset";
+    EXPECT_EQ(service->GetActiveApnName(apnName), 0);
+    EXPECT_EQ(apnName, "");
+
+    service->cellularDataControllers_.erase(99);
+}
+
+/**
+ * @tc.number   GetDataConnIpType_IsNeedDoRecovery_EarlyExit_001
+ * @tc.name     test GetDataConnIpType / IsNeedDoRecovery early exits
+ * @tc.desc     权限拒绝 → PERMISSION_ERR；权限放行 + slot 99 无 controller → INVALID_PARAM。
+ */
+HWTEST_F(CellularDataServiceTest, GetDataConnIpType_IsNeedDoRecovery_EarlyExit_001, TestSize.Level1)
+{
+    std::string ipType = "preset";
+    // A) GetDataConnIpType 权限拒绝
+    EXPECT_EQ(service->GetDataConnIpType(99, ipType), TELEPHONY_ERR_PERMISSION_ERR);
+    // B) 放行 + 无 controller → INVALID_PARAM
+    auto permissionMock = MockTelephonyPermission::GetOrCreateMockTelephonyPermission();
+    ON_CALL(*permissionMock, CheckPermission(Eq(std::string(Permission::GET_TELEPHONY_STATE))))
+        .WillByDefault(Return(true));
+    service->isInitSuccess_ = true;
+    EXPECT_EQ(service->GetDataConnIpType(99, ipType), CELLULAR_DATA_INVALID_PARAM);
+    // C) IsNeedDoRecovery 权限拒绝（SET_TELEPHONY_STATE）
+    bool needRecovery = true;
+    EXPECT_EQ(service->IsNeedDoRecovery(99, needRecovery), TELEPHONY_ERR_PERMISSION_ERR);
+    // D) 放行 + 无 controller → INVALID_PARAM
+    ON_CALL(*permissionMock, CheckPermission(Eq(std::string(Permission::SET_TELEPHONY_STATE))))
+        .WillByDefault(Return(true));
+    EXPECT_EQ(service->IsNeedDoRecovery(99, needRecovery), CELLULAR_DATA_INVALID_PARAM);
+}
+
+/**
+ * @tc.number   RequestNetReleaseNet_IdentVariants_001
+ * @tc.name     test RequestNet / ReleaseNet ident parsing variants
+ * @tc.desc     ident 长度不足 / 前缀后非十进制 / 十进制溢出（ConvertStrToInt 失败）/
+ *              合法 simId 但无对应 controller（GetSlotId→-1）→ 全部 INVALID_PARAM。
+ */
+HWTEST_F(CellularDataServiceTest, RequestNetReleaseNet_IdentVariants_001, TestSize.Level1)
+{
+    NetRequest request;
+    request.capability = 0;
+    // A) ident 长度不足（< strlen("simId")）
+    request.ident = "ab";
+    EXPECT_EQ(service->RequestNet(request), CELLULAR_DATA_INVALID_PARAM);
+    EXPECT_EQ(service->ReleaseNet(request), CELLULAR_DATA_INVALID_PARAM);
+    // B) 前缀后非十进制
+    request.ident = std::string(IDENT_PREFIX) + "abc";
+    EXPECT_EQ(service->RequestNet(request), CELLULAR_DATA_INVALID_PARAM);
+    EXPECT_EQ(service->ReleaseNet(request), CELLULAR_DATA_INVALID_PARAM);
+    // C) 十进制但超 int32 范围 → ConvertStrToInt 失败
+    request.ident = std::string(IDENT_PREFIX) + "99999999999";
+    EXPECT_EQ(service->RequestNet(request), CELLULAR_DATA_INVALID_PARAM);
+    EXPECT_EQ(service->ReleaseNet(request), CELLULAR_DATA_INVALID_PARAM);
+    // D) 合法 simId → NetAgent 无注册（GetSlotId→-1）→ 无 controller → INVALID_PARAM
+    request.ident = std::string(IDENT_PREFIX) + "5";
+    EXPECT_EQ(service->RequestNet(request), CELLULAR_DATA_INVALID_PARAM);
+    EXPECT_EQ(service->ReleaseNet(request), CELLULAR_DATA_INVALID_PARAM);
+}
+
+/**
+ * @tc.number   DispatchEvent_NoController_001
+ * @tc.name     test DispatchEvent with no controller
+ * @tc.desc     slot 99 无 controller → 早退返回。
+ */
+HWTEST_F(CellularDataServiceTest, DispatchEvent_NoController_001, TestSize.Level1)
+{
+    service->isInitSuccess_ = true;
+    auto event = AppExecFwk::InnerEvent::Get(0);
+    service->DispatchEvent(99, event);
+    EXPECT_EQ(service->GetCellularDataController(99), nullptr);
+}
+
+/**
+ * @tc.number   GetCellularDataSupplierId_CapabilityBounds_001
+ * @tc.name     test GetCellularDataSupplierId capability bounds
+ * @tc.desc     capability 低于 MMS / 高于 SNSSAI6 → INVALID_PARAM；范围内 → GetSupplierId → SUCCESS。
+ */
+HWTEST_F(CellularDataServiceTest, GetCellularDataSupplierId_CapabilityBounds_001, TestSize.Level1)
+{
+    auto permissionMock = MockTelephonyPermission::GetOrCreateMockTelephonyPermission();
+    ON_CALL(*permissionMock, CheckPermission(Eq(std::string(Permission::GET_TELEPHONY_STATE))))
+        .WillByDefault(Return(true));
+    uint32_t supplierId = 0;
+    // A) capability 过小
+    EXPECT_EQ(service->GetCellularDataSupplierId(0, static_cast<uint64_t>(NetCap::NET_CAPABILITY_MMS) - 1,
+        supplierId), CELLULAR_DATA_INVALID_PARAM);
+    // B) capability 过大
+    EXPECT_EQ(service->GetCellularDataSupplierId(0, static_cast<uint64_t>(NetCap::NET_CAPABILITY_SNSSAI6) + 1,
+        supplierId), CELLULAR_DATA_INVALID_PARAM);
+    // C) 范围内（MMS）→ 走 GetSupplierId → SUCCESS
+    EXPECT_EQ(service->GetCellularDataSupplierId(0, static_cast<uint64_t>(NetCap::NET_CAPABILITY_MMS), supplierId),
+        TELEPHONY_ERR_SUCCESS);
+}
+
+/**
+ * @tc.number   CorrectNetSupplierNoAvailable_001
+ * @tc.name     test CorrectNetSupplierNoAvailable controller null and connected state
+ * @tc.desc     无 controller → INVALID_PARAM；controller@99 + default holder CONNECTED → FAIL。
+ */
+HWTEST_F(CellularDataServiceTest, CorrectNetSupplierNoAvailable_001, TestSize.Level1)
+{
+    auto permissionMock = MockTelephonyPermission::GetOrCreateMockTelephonyPermission();
+    ON_CALL(*permissionMock, CheckPermission(Eq(std::string(Permission::SET_TELEPHONY_STATE))))
+        .WillByDefault(Return(true));
+    service->isInitSuccess_ = true;
+    // A) 无 controller → INVALID_PARAM
+    EXPECT_EQ(service->CorrectNetSupplierNoAvailable(99), CELLULAR_DATA_INVALID_PARAM);
+    // B) controller@99 + default CONNECTED → FAIL（不再下探 UpdateNetworkInfo）
+    auto mockSim = std::make_shared<MockSimManager>();
+    ON_CALL(*mockSim, GetDefaultCellularDataSlotId()).WillByDefault(Return(99));
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+    auto controller = std::make_shared<CellularDataController>(99);
+    auto handler = TestAsyncUtils::MakeDrainedHandler(99);
+    handler->Init();
+    sptr<ApnHolder> defaultHolder = handler->apnManager_->GetApnHolder(DATA_CONTEXT_ROLE_DEFAULT);
+    ASSERT_NE(defaultHolder, nullptr);
+    defaultHolder->SetApnState(ApnProfileState::PROFILE_STATE_CONNECTED);
+    controller->cellularDataHandler_ = handler;
+    service->cellularDataControllers_[99] = controller;
+    EXPECT_EQ(service->CorrectNetSupplierNoAvailable(99), TELEPHONY_ERR_FAIL);
+    service->cellularDataControllers_.erase(99);
+}
+
+/**
+ * @tc.number   EstablishAllApnsIfConnectable_SimInactive_001
+ * @tc.name     test EstablishAllApnsIfConnectable with inactive sim
+ * @tc.desc     controller@99 + HasSimCard true + IsSimActive false → SLOTID_INVALID。
+ */
+HWTEST_F(CellularDataServiceTest, EstablishAllApnsIfConnectable_SimInactive_001, TestSize.Level1)
+{
+    auto permissionMock = MockTelephonyPermission::GetOrCreateMockTelephonyPermission();
+    ON_CALL(*permissionMock, CheckPermission(Eq(std::string(Permission::SET_TELEPHONY_STATE))))
+        .WillByDefault(Return(true));
+    service->isInitSuccess_ = true;
+    auto mockSim = std::make_shared<MockSimManager>();
+    ON_CALL(*mockSim, HasSimCard(_, _)).WillByDefault(DoAll(SetArgReferee<1>(true), Return(0)));
+    ON_CALL(*mockSim, IsSimActive(_)).WillByDefault(Return(false));
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+    auto controller = std::make_shared<CellularDataController>(99);
+    auto handler = TestAsyncUtils::MakeDrainedHandler(99);
+    controller->cellularDataHandler_ = handler;
+    service->cellularDataControllers_[99] = controller;
+    EXPECT_EQ(service->EstablishAllApnsIfConnectable(99), TELEPHONY_ERR_SLOTID_INVALID);
+    service->cellularDataControllers_.erase(99);
+}
+
+/**
+ * @tc.number   SetDefaultCellularDataSlotId_FullChain_001
+ * @tc.name     test SetDefaultCellularDataSlotId full mocked chain
+ * @tc.desc     系统应用+权限放行 + HasSimCard/IsSimActive true + 旧卡-1（L503）+
+ *              SetDefault 返回错误（L508）/成功（L511）两变体。
+ */
+HWTEST_F(CellularDataServiceTest, SetDefaultCellularDataSlotId_FullChain_001, TestSize.Level1)
+{
+    auto permissionMock = MockTelephonyPermission::GetOrCreateMockTelephonyPermission();
+    ON_CALL(*permissionMock, CheckCallerIsSystemApp()).WillByDefault(Return(true));
+    ON_CALL(*permissionMock, CheckPermission(Eq(std::string(Permission::SET_TELEPHONY_STATE))))
+        .WillByDefault(Return(true));
+    auto mockSim = std::make_shared<MockSimManager>();
+    ON_CALL(*mockSim, GetInternalSlotIdForDefaultData(_)).WillByDefault(Return(0));
+    ON_CALL(*mockSim, HasSimCard(_, _)).WillByDefault(DoAll(SetArgReferee<1>(true), Return(0)));
+    ON_CALL(*mockSim, IsSimActive(_)).WillByDefault(Return(true));
+    ON_CALL(*mockSim, GetDefaultCellularDataSlotId()).WillByDefault(Return(-1));
+    ON_CALL(*mockSim, SetDefaultCellularDataSlotId(_)).WillByDefault(Return(TELEPHONY_ERR_SLOTID_INVALID));
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+    // A) 全链通 + SetDefault 失败 → 透传错误码
+    EXPECT_EQ(service->SetDefaultCellularDataSlotId(0), TELEPHONY_ERR_SLOTID_INVALID);
+    // B) SetDefault 成功 → SUCCESS
+    ON_CALL(*mockSim, SetDefaultCellularDataSlotId(_)).WillByDefault(Return(TELEPHONY_ERR_SUCCESS));
+    EXPECT_EQ(service->SetDefaultCellularDataSlotId(0), TELEPHONY_ERR_SUCCESS);
+}
+
+/**
+ * @tc.number   GetDefaultCellularDataSlotId_External_001
+ * @tc.name     test GetDefaultCellularDataSlotId internal and external slot branches
+ * @tc.desc     mock 默认卡 -1（< 分布式起始值 → 直透）/ 5（≥ 起始值 → 走外部 slot 换算）。
+ */
+HWTEST_F(CellularDataServiceTest, GetDefaultCellularDataSlotId_External_001, TestSize.Level1)
+{
+    auto mockSim = std::make_shared<MockSimManager>();
+    ON_CALL(*mockSim, GetExternalSlotIdForDefaultData(_)).WillByDefault(Return(7));
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+    // A) 内部 slotId -1 → 直透
+    ON_CALL(*mockSim, GetDefaultCellularDataSlotId()).WillByDefault(Return(-1));
+    int32_t slotId = -100;
+    EXPECT_EQ(service->GetDefaultCellularDataSlotId(slotId), TELEPHONY_ERR_SUCCESS);
+    EXPECT_EQ(slotId, -1);
+    // B) 内部 slotId 5（≥ DISTRIBUTED_MULTI_DEVICE_SLOTID_START）→ 外部换算
+    ON_CALL(*mockSim, GetDefaultCellularDataSlotId()).WillByDefault(
+        Return(DISTRIBUTED_MULTI_DEVICE_SLOTID_START + 1));
+    slotId = -100;
+    EXPECT_EQ(service->GetDefaultCellularDataSlotId(slotId), TELEPHONY_ERR_SUCCESS);
+    EXPECT_EQ(slotId, 7);
+}
+
+/**
+ * @tc.number   Dump_FdVariants_001
+ * @tc.name     test Dump with fd and args variants
+ * @tc.desc     fd<0 → ERR_FAIL；合法 fd + --help 参数 → 帮助文本；未打开高 fd → dprintf 失败。
+ */
+HWTEST_F(CellularDataServiceTest, Dump_FdVariants_001, TestSize.Level1)
+{
+    std::vector<std::u16string> helpArgs = { u"cellular_data", u"--help" };
+    // A) fd<0 → 早退 ERR_FAIL
+    EXPECT_EQ(service->Dump(-1, helpArgs), TELEPHONY_ERR_FAIL);
+    // B) 合法 fd + --help → ShowHelp 路径 + dprintf 成功
+    EXPECT_EQ(service->Dump(1, helpArgs), TELEPHONY_ERR_SUCCESS);
+    // C) 未打开的高 fd → dprintf 返回负值 → ERR_FAIL
+    EXPECT_EQ(service->Dump(100000, helpArgs), TELEPHONY_ERR_FAIL);
+    // D) 空参数 → ShowCellularDataInfo 路径
+    std::vector<std::u16string> emptyArgs;
+    EXPECT_EQ(service->Dump(1, emptyArgs), TELEPHONY_ERR_SUCCESS);
 }
 } // namespace Telephony
 } // namespace OHOS

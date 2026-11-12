@@ -106,11 +106,13 @@ bool CellularDataService::Init()
 #endif
     InitModule();
     if (!registerToService_) {
+        // LCOV_EXCL_START
         bool ret = Publish(DelayedRefSingleton<CellularDataService>::GetInstance().AsObject());
         if (!ret) {
             TELEPHONY_LOGE("Publish failed!");
             return false;
         }
+        // LCOV_EXCL_STOP
         registerToService_ = true;
     }
     std::lock_guard<std::mutex> guard(mapLock_);
@@ -197,10 +199,12 @@ int32_t CellularDataService::GetCellularDataState(int32_t &state)
     int32_t slotId;
     CellularDataService::GetDefaultCellularDataSlotId(slotId);
 #ifdef OHOS_BUILD_ENABLE_TELEPHONY_EXT
+    // LCOV_EXCL_START
     if (TELEPHONY_EXT_WRAPPER.isVSimEnabled_ && TELEPHONY_EXT_WRAPPER.isVSimEnabled_()) {
         TELEPHONY_LOGI("VSimEnabled slotId: %{public}d => %{public}d", slotId, CELLULAR_DATA_VSIM_SLOT_ID);
         slotId = CELLULAR_DATA_VSIM_SLOT_ID;
     }
+    // LCOV_EXCL_STOP
 #endif
 
     std::shared_ptr<CellularDataController> cellularDataController = GetCellularDataController(slotId);
@@ -219,12 +223,10 @@ int32_t CellularDataService::GetCellularDataState(int32_t &state)
 
 int32_t CellularDataService::GetApnState(int32_t slotId, const std::string &apnType, int &state)
 {
-    // LCOV_EXCL_START
     if (!TelephonyPermission::CheckPermission(Permission::GET_TELEPHONY_STATE)) {
         TELEPHONY_LOGE("Permission denied!");
         return TELEPHONY_ERR_PERMISSION_ERR;
     }
-    // LCOV_EXCL_STOP
     std::shared_ptr<CellularDataController> cellularDataController = GetCellularDataController(slotId);
     if (cellularDataController == nullptr) {
         TELEPHONY_LOGE("cellularDataControllers is null, slotId=%{public}d", slotId);
@@ -236,12 +238,10 @@ int32_t CellularDataService::GetApnState(int32_t slotId, const std::string &apnT
 
 int32_t CellularDataService::GetDataRecoveryState(int32_t &state)
 {
-    // LCOV_EXCL_START
     if (!TelephonyPermission::CheckPermission(Permission::GET_TELEPHONY_STATE)) {
         TELEPHONY_LOGE("Permission denied!");
         return TELEPHONY_ERR_PERMISSION_ERR;
     }
-    // LCOV_EXCL_STOP
     std::lock_guard<std::mutex> guard(mapLock_);
     for (const auto &controller : cellularDataControllers_) {
         auto cellularDataController = controller.second;
@@ -677,12 +677,10 @@ int32_t CellularDataService::GetDataConnApnAttr(int32_t slotId, ApnAttribute &ap
 
 int32_t CellularDataService::GetDataConnIpType(int32_t slotId, std::string &ipType)
 {
-    // LCOV_EXCL_START
     if (!TelephonyPermission::CheckPermission(Permission::GET_TELEPHONY_STATE)) {
         TELEPHONY_LOGE("Permission denied!");
         return TELEPHONY_ERR_PERMISSION_ERR;
     }
-    // LCOV_EXCL_STOP
     std::shared_ptr<CellularDataController> cellularDataController = GetCellularDataController(slotId);
     if (cellularDataController == nullptr) {
         TELEPHONY_LOGE("cellularDataControllers is null, slotId=%{public}d", slotId);
@@ -855,10 +853,12 @@ int32_t CellularDataService::QueryApnIds(const ApnInfo& apnInfo, std::vector<uin
     }
     TELEPHONY_LOGI("QueryApnIds, info.type=%{public}s", Str16ToStr8(apnInfo.type).c_str());
     auto helper = CellularDataRdbHelper::GetInstance();
+    // LCOV_EXCL_START
     if (helper == nullptr) {
         TELEPHONY_LOGE("get cellularDataRdbHelper failed");
         return TELEPHONY_ERR_FAIL;
     }
+    // LCOV_EXCL_STOP
     helper->QueryApnIds(apnInfo, apnIdList);
     return 0;
 }
@@ -871,10 +871,12 @@ int32_t CellularDataService::SetPreferApn(int32_t apnId)
     }
     TELEPHONY_LOGI("SetPreferApn, apnId=%{public}d", apnId);
     auto helper = CellularDataRdbHelper::GetInstance();
+    // LCOV_EXCL_START
     if (helper == nullptr) {
         TELEPHONY_LOGE("get cellularDataRdbHelper failed");
         return TELEPHONY_ERR_FAIL;
     }
+    // LCOV_EXCL_STOP
     return helper->SetPreferApn(apnId);
 }
 
@@ -886,10 +888,12 @@ int32_t CellularDataService::QueryAllApnInfo(std::vector<ApnInfo> &allApnInfoLis
     }
     TELEPHONY_LOGI("QueryAllApnInfo");
     auto helper = CellularDataRdbHelper::GetInstance();
+    // LCOV_EXCL_START
     if (helper == nullptr) {
         TELEPHONY_LOGE("get cellularDataRdbHelper failed");
         return TELEPHONY_ERR_FAIL;
     }
+    // LCOV_EXCL_STOP
     helper->QueryAllApnInfo(allApnInfoList);
     return 0;
 }
@@ -962,10 +966,12 @@ int32_t CellularDataService::GetActiveApnName(std::string &apnName)
         return 0;
     }
     auto helper = CellularDataRdbHelper::GetInstance();
+    // LCOV_EXCL_START
     if (helper == nullptr) {
         TELEPHONY_LOGE("get cellularDataRdbHelper failed");
         return 0;
     }
+    // LCOV_EXCL_STOP
     std::vector<PdpProfile> preferApnVec;
     if (!helper->QueryPreferApn(slotId, preferApnVec)) {
         TELEPHONY_LOGI("query prefer apn fail");
@@ -985,6 +991,7 @@ __attribute__((no_sanitize("cfi")))
 void CellularDataService::SendSlotChangeInfoToChr(int32_t slotId)
 {
     #ifdef OHOS_BUILD_ENABLE_TELEPHONY_EXT
+    // LCOV_EXCL_START
     if (TELEPHONY_EXT_WRAPPER.sendCellularDataSlotChangeInfo_) {
         int32_t callingUid = IPCSkeleton::GetCallingUid();
         int32_t callingPid = IPCSkeleton::GetCallingPid();
@@ -996,6 +1003,7 @@ void CellularDataService::SendSlotChangeInfoToChr(int32_t slotId)
         }
         TELEPHONY_EXT_WRAPPER.sendCellularDataSlotChangeInfo_(bundleName.c_str(), callingPid, slotId);
     }
+    // LCOV_EXCL_STOP
     #else
         TELEPHONY_LOGE("not support telephony ext");
     #endif

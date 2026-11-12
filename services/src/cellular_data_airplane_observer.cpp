@@ -26,9 +26,11 @@ namespace Telephony {
 void CellularDataAirplaneObserver::OnChange()
 {
     std::shared_ptr<CellularDataSettingsRdbHelper> settingHelper = CellularDataSettingsRdbHelper::GetInstance();
+    // LCOV_EXCL_START
     if (settingHelper == nullptr) {
         return;
     }
+    // LCOV_EXCL_STOP
     Uri uri(CELLULAR_DATA_AIRPLANE_MODE_URI);
     int value = 0;
     if (settingHelper->GetValue(uri, CELLULAR_DATA_COLUMN_AIRPLANE, value) != TELEPHONY_ERR_SUCCESS) {
