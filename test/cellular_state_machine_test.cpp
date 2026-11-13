@@ -1385,7 +1385,7 @@ HWTEST_F(CellularStateMachineTest, Active_ProcessDataConnectionRoamOn_001, Funct
     active->stateMachine_ = cellularMachine;
     auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_SM_CONNECT);
     bool result = active->ProcessDataConnectionRoamOn(event);
-    EXPECT_EQ(result, true);
+    EXPECT_TRUE(result);
 }
 
 /**
