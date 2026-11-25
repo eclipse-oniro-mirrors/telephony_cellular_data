@@ -2778,6 +2778,9 @@ std::shared_ptr<CellularDataStateMachine> CellularDataHandler::CheckForCompatibl
     }
     for (const auto& curDc : allDCs) {
         sptr<ApnItem> apnItem = curDc->GetApnItem();
+        if (apnItem == nullptr) {
+            continue;
+        }
         for (const auto& dunItem : dunApnList) {
             if (!ApnHolder::IsCompatibleApnItem(apnItem, dunItem, isRoaming)) {
                 continue;
