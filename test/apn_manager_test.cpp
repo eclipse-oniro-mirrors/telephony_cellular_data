@@ -17,19 +17,32 @@
 
 #include "apn_holder.h"
 #include "apn_manager.h"
+#include "cellular_data_rdb_helper.h"
 #include "cellular_data_state_machine.h"
 #include "cellular_data_client.h"
 #include "cellular_data_constant.h"
+#include "core_manager_inner.h"
 #include "data_connection_manager.h"
 #include "gtest/gtest.h"
+#include "mock/mock_sim_manager.h"
+#include "mock/mock_network_search.h"
+#include "mock/mock_data_share_helper.h"
+#include "mock/mock_data_share_result_set.h"
 #include "tel_event_handler.h"
 #include "pdp_profile_data.h"
 #include "telephony_ext_wrapper.h"
+#include "utils/scoped_setter.h"
 #include "utils/test_async_utils.h"
+#include <map>
 
 namespace OHOS {
 namespace Telephony {
 using namespace testing::ext;
+using ::testing::_;
+using ::testing::DoAll;
+using ::testing::Invoke;
+using ::testing::Return;
+using ::testing::SetArgReferee;
 
 class ApnManagerTest : public testing::Test {
 public:
@@ -1750,6 +1763,968 @@ HWTEST_F(ApnManagerTest, IsPreferIdChangedByMerge_002, Function | MediumTest | L
     apnManager->MergePdpProfile(newProfile, oldProfile);
     EXPECT_FALSE(apnManager->IsPreferIdChangedByMerge());
     EXPECT_EQ(apnManager->preferId_, 100);
+}
+
+/**
+ * @tc.number   CreateAllApnItemByDatabase_001
+ * @tc.name     test CreateAllApnItemByDatabase with empty operator numeric
+ * @tc.desc     Function test: sim operator numeric is empty, apn creation stops with error message
+ */
+HWTEST_F(ApnManagerTest, CreateAllApnItemByDatabase_001, Function | MediumTest | Level1)
+{
+    auto mockSim = std::make_shared<MockSimManager>();
+    EXPECT_CALL(*mockSim, GetSimOperatorNumeric(_, _))
+        .WillOnce(DoAll(SetArgReferee<1>(u""), Return(0)));
+    EXPECT_CALL(*mockSim, IsCTSimCard(_, _))
+        .WillOnce(DoAll(SetArgReferee<1>(false), Return(0)));
+    // 真机上 vendor ext 钩子已加载会使 CreateAllApnItemByDatabase 提前返回、走不到 sim
+    // 查询；经守卫临时屏蔽并在用例结束还原原钩子，保证本用例只依赖自建 mock
+    ScopedSetter<TelephonyExtWrapper::CREATE_ALL_APN_ITEM_EXT> createAllApnGuard(TELEPHONY_EXT_WRAPPER.createAllApnItemExt_, nullptr);
+    ScopedSetter<TelephonyExtWrapper::CREATE_DC_APN_ITEM_EXT> createDcApnGuard(TELEPHONY_EXT_WRAPPER.createDcApnItemExt_, nullptr);
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+    std::string errMsg;
+    EXPECT_EQ(apnManager->CreateAllApnItemByDatabase(0, errMsg), 0);
+    EXPECT_EQ(errMsg, "numeric is empty");
+}
+
+/**
+ * @tc.number   CreateAllApnItemByDatabase_002
+ * @tc.name     test CreateAllApnItemByDatabase with invalid sim id
+ * @tc.desc     Function test: GetPreferId fails due to invalid sim id, apn creation stops early
+ */
+HWTEST_F(ApnManagerTest, CreateAllApnItemByDatabase_002, Function | MediumTest | Level1)
+{
+    auto mockSim = std::make_shared<MockSimManager>();
+    EXPECT_CALL(*mockSim, GetSimOperatorNumeric(_, _))
+        .WillOnce(DoAll(SetArgReferee<1>(u"46000"), Return(0)));
+    EXPECT_CALL(*mockSim, IsCTSimCard(_, _))
+        .WillOnce(DoAll(SetArgReferee<1>(false), Return(0)));
+    EXPECT_CALL(*mockSim, GetSimId(_)).WillOnce(Return(0));
+    // 同 _001：临时屏蔽 vendor ext 钩子，用例结束经守卫还原
+    ScopedSetter<TelephonyExtWrapper::CREATE_ALL_APN_ITEM_EXT> createAllApnGuard(TELEPHONY_EXT_WRAPPER.createAllApnItemExt_, nullptr);
+    ScopedSetter<TelephonyExtWrapper::CREATE_DC_APN_ITEM_EXT> createDcApnGuard(TELEPHONY_EXT_WRAPPER.createDcApnItemExt_, nullptr);
+    ScopedSetter<std::shared_ptr<ISimManager>> simGuard(CoreManagerInner::GetInstance().simManager_, mockSim);
+    std::string errMsg;
+    EXPECT_EQ(apnManager->CreateAllApnItemByDatabase(0, errMsg), 0);
+    EXPECT_EQ(errMsg, "GetPreferId create failed due to invalid sim id");
+}
+
+/*
+ * ==== P2 batch-2 续：apn_manager 纯逻辑函数直驱（b2full 函数级缺口）====
+ * 目标：GetCTOperator 44、FetchDunApns 40、GetOverallApnState 28、GetOverallDefaultApnState 18。
+ * CoreManagerInner 依赖一律走 RAII 安装（构造替换、析构还原原 mock，避免跨用例污染）。
+ */
+namespace {
+class ScopedCoreMock {
+public:
+    ScopedCoreMock()
+    {
+        auto &core = CoreManagerInner::GetInstance();
+        savedSim_ = core.simManager_;
+        savedNss_ = core.networkSearchManager_;
+        simMock_ = std::make_shared<MockSimManager>();
+        nssMock_ = std::make_shared<MockNetworkSearchManager>();
+        core.simManager_ = simMock_;
+        core.networkSearchManager_ = nssMock_;
+    }
+    ~ScopedCoreMock()
+    {
+        auto &core = CoreManagerInner::GetInstance();
+        core.simManager_ = savedSim_;
+        core.networkSearchManager_ = savedNss_;
+    }
+    std::shared_ptr<MockSimManager> simMock_;
+    std::shared_ptr<MockNetworkSearchManager> nssMock_;
+
+private:
+    std::shared_ptr<ISimManager> savedSim_;
+    std::shared_ptr<INetworkSearch> savedNss_;
+};
+} // namespace
+
+/**
+ * @tc.number   ApnManager_GetCTOperator_001
+ * @tc.name     test get ct operator with isCT false / gc iccid / 46011 unchanged
+ * @tc.desc     Function test
+ */
+HWTEST_F(ApnManagerTest, ApnManager_GetCTOperator_001, TestSize.Level0)
+{
+    ScopedCoreMock core;
+    // 1) isCT=false：numeric 不变（第一/第二分支均不进）
+    EXPECT_CALL(*core.simMock_, IsCTSimCard(0, _))
+        .WillOnce([](int32_t, bool &isCT) { isCT = false; return 0; });
+    std::string numeric = "46000";
+    apnManager->GetCTOperator(0, numeric);
+    EXPECT_EQ(numeric, "46000");
+    // 2) isCT=true 且 numeric != 46011 → 改 46003；天翼通 GC ICCID 前缀命中 → 45431
+    EXPECT_CALL(*core.simMock_, IsCTSimCard(0, _))
+        .WillOnce([](int32_t, bool &isCT) { isCT = true; return 0; });
+    EXPECT_CALL(*core.simMock_, GetSimIccId(0, _))
+        .WillOnce([](int32_t, std::u16string &iccId) { iccId = u"8985231999"; return 0; });
+    EXPECT_CALL(*core.simMock_, GetSimSpn(0, _))
+        .WillOnce([](int32_t, std::u16string &spn) { spn = u"China Telecom"; return 0; });
+    numeric = "46000";
+    apnManager->GetCTOperator(0, numeric);
+    EXPECT_EQ(numeric, "45431");
+    // 3) isCT=true 且 numeric == 46011 → 第一个分支不进；非 46003 → 深层分支不进
+    EXPECT_CALL(*core.simMock_, IsCTSimCard(0, _))
+        .WillOnce([](int32_t, bool &isCT) { isCT = true; return 0; });
+    numeric = "46011";
+    apnManager->GetCTOperator(0, numeric);
+    EXPECT_EQ(numeric, "46011");
+}
+
+/**
+ * @tc.number   ApnManager_GetCTOperator_002
+ * @tc.name     test get ct operator with gc spn / mo iccid plmn variants / no match
+ * @tc.desc     Function test
+ */
+HWTEST_F(ApnManagerTest, ApnManager_GetCTOperator_002, TestSize.Level0)
+{
+    ScopedCoreMock core;
+    // 1) ICCID 不命中但 SPN=CTExcel → GC 分支
+    EXPECT_CALL(*core.simMock_, IsCTSimCard(0, _))
+        .WillOnce([](int32_t, bool &isCT) { isCT = true; return 0; });
+    EXPECT_CALL(*core.simMock_, GetSimIccId(0, _))
+        .WillOnce([](int32_t, std::u16string &iccId) { iccId = u"1234567890"; return 0; });
+    EXPECT_CALL(*core.simMock_, GetSimSpn(0, _))
+        .WillOnce([](int32_t, std::u16string &spn) { spn = u"CTExcel"; return 0; });
+    std::string numeric = "46000";
+    apnManager->GetCTOperator(0, numeric);
+    EXPECT_EQ(numeric, "45431");
+    // 2) MO ICCID_1 命中 + plmn=46001 → 转 46001
+    EXPECT_CALL(*core.simMock_, IsCTSimCard(0, _))
+        .WillOnce([](int32_t, bool &isCT) { isCT = true; return 0; });
+    EXPECT_CALL(*core.simMock_, GetSimIccId(0, _))
+        .WillOnce([](int32_t, std::u16string &iccId) { iccId = u"8985302123"; return 0; });
+    EXPECT_CALL(*core.simMock_, GetSimSpn(0, _))
+        .WillOnce([](int32_t, std::u16string &spn) { spn = u"China Telecom"; return 0; });
+    EXPECT_CALL(*core.simMock_, GetSimOperatorNumeric(0, _))
+        .WillOnce([](int32_t, std::u16string &plmn) { plmn = u"46001"; return 0; });
+    numeric = "46000";
+    apnManager->GetCTOperator(0, numeric);
+    EXPECT_EQ(numeric, "46001");
+    // 3) MO ICCID_2 命中 + plmn 空 → 保持 46003
+    EXPECT_CALL(*core.simMock_, IsCTSimCard(0, _))
+        .WillOnce([](int32_t, bool &isCT) { isCT = true; return 0; });
+    EXPECT_CALL(*core.simMock_, GetSimIccId(0, _))
+        .WillOnce([](int32_t, std::u16string &iccId) { iccId = u"8985307123"; return 0; });
+    EXPECT_CALL(*core.simMock_, GetSimSpn(0, _))
+        .WillOnce([](int32_t, std::u16string &spn) { spn = u"China Telecom"; return 0; });
+    EXPECT_CALL(*core.simMock_, GetSimOperatorNumeric(0, _))
+        .WillOnce([](int32_t, std::u16string &plmn) { plmn = u""; return 0; });
+    numeric = "46000";
+    apnManager->GetCTOperator(0, numeric);
+    EXPECT_EQ(numeric, "46003");
+    // 4) MO ICCID 命中 + plmn 非 46001 → 保持 46003
+    EXPECT_CALL(*core.simMock_, IsCTSimCard(0, _))
+        .WillOnce([](int32_t, bool &isCT) { isCT = true; return 0; });
+    EXPECT_CALL(*core.simMock_, GetSimIccId(0, _))
+        .WillOnce([](int32_t, std::u16string &iccId) { iccId = u"8985302123"; return 0; });
+    EXPECT_CALL(*core.simMock_, GetSimSpn(0, _))
+        .WillOnce([](int32_t, std::u16string &spn) { spn = u"China Telecom"; return 0; });
+    EXPECT_CALL(*core.simMock_, GetSimOperatorNumeric(0, _))
+        .WillOnce([](int32_t, std::u16string &plmn) { plmn = u"46002"; return 0; });
+    numeric = "46000";
+    apnManager->GetCTOperator(0, numeric);
+    EXPECT_EQ(numeric, "46003");
+    // 5) ICCID/SPN 均不命中 → 保持 46003
+    EXPECT_CALL(*core.simMock_, IsCTSimCard(0, _))
+        .WillOnce([](int32_t, bool &isCT) { isCT = true; return 0; });
+    EXPECT_CALL(*core.simMock_, GetSimIccId(0, _))
+        .WillOnce([](int32_t, std::u16string &iccId) { iccId = u"9999999999"; return 0; });
+    EXPECT_CALL(*core.simMock_, GetSimSpn(0, _))
+        .WillOnce([](int32_t, std::u16string &spn) { spn = u"China Mobile"; return 0; });
+    numeric = "46000";
+    apnManager->GetCTOperator(0, numeric);
+    EXPECT_EQ(numeric, "46003");
+}
+
+/**
+ * @tc.number   ApnManager_FetchDunApns_001
+ * @tc.name     test fetch dun apns in roaming with user edited prefer
+ * @tc.desc     Function test
+ */
+HWTEST_F(ApnManagerTest, ApnManager_FetchDunApns_001, TestSize.Level0)
+{
+    ScopedCoreMock core;
+    apnManager->preferId_ = 5;
+    sptr<ApnItem> dunApn = ApnItem::MakeDefaultApn("default,dun");
+    dunApn->attr_.profileId_ = 5;
+    dunApn->attr_.isEdited_ = true;
+    // 1) 漫游 + 无偏好（未编辑）→ 早退，列表不变
+    EXPECT_CALL(*core.nssMock_, GetPsRoamingState(0)).WillOnce(Return(1));
+    apnManager->allApnItem_.clear();
+    std::vector<sptr<ApnItem>> matchList;
+    apnManager->FetchDunApns(matchList, 0);
+    EXPECT_TRUE(matchList.empty());
+    // 2) 漫游 + 偏好已编辑且可处理 DUN → 偏好插入队首
+    apnManager->allApnItem_.push_back(dunApn);
+    EXPECT_CALL(*core.nssMock_, GetPsRoamingState(0)).WillOnce(Return(1));
+    apnManager->FetchDunApns(matchList, 0);
+    ASSERT_EQ(matchList.size(), 1);
+    EXPECT_EQ(matchList[0], dunApn);
+}
+
+/**
+ * @tc.number   ApnManager_FetchDunApns_002
+ * @tc.name     test fetch dun apns not in roaming with scan-all fallback
+ * @tc.desc     Function test
+ */
+HWTEST_F(ApnManagerTest, ApnManager_FetchDunApns_002, TestSize.Level0)
+{
+    ScopedCoreMock core;
+    // 1) 非漫游 + 偏好存在但不可处理 DUN → 不插入 → 全表扫描兜底收集 DUN 项
+    apnManager->preferId_ = 5;
+    sptr<ApnItem> preferApn = ApnItem::MakeDefaultApn("default");
+    preferApn->attr_.profileId_ = 5;
+    sptr<ApnItem> dunApn = ApnItem::MakeDefaultApn("default,dun");
+    apnManager->allApnItem_.clear();
+    apnManager->allApnItem_.push_back(preferApn);
+    apnManager->allApnItem_.push_back(dunApn);
+    EXPECT_CALL(*core.nssMock_, GetPsRoamingState(0)).WillOnce(Return(0));
+    std::vector<sptr<ApnItem>> matchList;
+    apnManager->FetchDunApns(matchList, 0);
+    ASSERT_EQ(matchList.size(), 1);
+    EXPECT_EQ(matchList[0], dunApn);
+    // 2) 非漫游 + 无偏好命中 + 空表 → 列表保持空
+    apnManager->preferId_ = 99;
+    apnManager->allApnItem_.clear();
+    EXPECT_CALL(*core.nssMock_, GetPsRoamingState(0)).WillOnce(Return(0));
+    matchList.clear();
+    apnManager->FetchDunApns(matchList, 0);
+    EXPECT_TRUE(matchList.empty());
+}
+
+/**
+ * @tc.number   ApnManager_GetOverallApnState_002
+ * @tc.name     test overall apn state with connected/connecting/retrying/idle holders
+ * @tc.desc     Function test
+ */
+HWTEST_F(ApnManagerTest, ApnManager_GetOverallApnState_002, TestSize.Level0)
+{
+    auto makeHolder = [](ApnProfileState state) {
+        sptr<ApnHolder> holder = std::make_unique<ApnHolder>(DATA_CONTEXT_ROLE_DEFAULT,
+            static_cast<int32_t>(DataContextPriority::PRIORITY_LOW)).release();
+        holder->apnState_ = state;
+        return holder;
+    };
+    // 1) 空 holders → IDLE
+    EXPECT_EQ(apnManager->GetOverallApnState(), ApnProfileState::PROFILE_STATE_IDLE);
+    // 2) CONNECTED → HasAnyConnectedState 命中 → CONNECTED
+    apnManager->apnHolders_.push_back(makeHolder(ApnProfileState::PROFILE_STATE_CONNECTED));
+    EXPECT_EQ(apnManager->GetOverallApnState(), ApnProfileState::PROFILE_STATE_CONNECTED);
+    apnManager->apnHolders_.clear();
+    // 3) DISCONNECTING → HasAnyConnectedState 命中 → CONNECTED
+    apnManager->apnHolders_.push_back(makeHolder(ApnProfileState::PROFILE_STATE_DISCONNECTING));
+    EXPECT_EQ(apnManager->GetOverallApnState(), ApnProfileState::PROFILE_STATE_CONNECTED);
+    apnManager->apnHolders_.clear();
+    // 4) CONNECTING → CONNECTING
+    apnManager->apnHolders_.push_back(makeHolder(ApnProfileState::PROFILE_STATE_CONNECTING));
+    EXPECT_EQ(apnManager->GetOverallApnState(), ApnProfileState::PROFILE_STATE_CONNECTING);
+    apnManager->apnHolders_.clear();
+    // 5) RETRYING → CONNECTING
+    apnManager->apnHolders_.push_back(makeHolder(ApnProfileState::PROFILE_STATE_RETRYING));
+    EXPECT_EQ(apnManager->GetOverallApnState(), ApnProfileState::PROFILE_STATE_CONNECTING);
+    apnManager->apnHolders_.clear();
+    // 6) IDLE → failState → IDLE（含 nullptr holder 跳过）
+    apnManager->apnHolders_.push_back(nullptr);
+    apnManager->apnHolders_.push_back(makeHolder(ApnProfileState::PROFILE_STATE_IDLE));
+    EXPECT_EQ(apnManager->GetOverallApnState(), ApnProfileState::PROFILE_STATE_IDLE);
+}
+
+/**
+ * @tc.number   ApnManager_GetOverallDefaultApnState_002
+ * @tc.name     test overall default apn state with default/internal holders
+ * @tc.desc     Function test
+ */
+HWTEST_F(ApnManagerTest, ApnManager_GetOverallDefaultApnState_002, TestSize.Level0)
+{
+    auto makeHolder = [](const std::string &type, ApnProfileState state) {
+        sptr<ApnHolder> holder = std::make_unique<ApnHolder>(type,
+            static_cast<int32_t>(DataContextPriority::PRIORITY_LOW)).release();
+        holder->apnState_ = state;
+        return holder;
+    };
+    // 1) 空 holders → IDLE
+    EXPECT_EQ(apnManager->GetOverallDefaultApnState(), ApnProfileState::PROFILE_STATE_IDLE);
+    // 2) default=CONNECTED → 按优先级数组命中 CONNECTED
+    apnManager->apnHolders_.push_back(makeHolder(DATA_CONTEXT_ROLE_DEFAULT,
+        ApnProfileState::PROFILE_STATE_CONNECTED));
+    EXPECT_EQ(apnManager->GetOverallDefaultApnState(), ApnProfileState::PROFILE_STATE_CONNECTED);
+    apnManager->apnHolders_.clear();
+    // 3) default=FAILED + internal=RETRYING → IDLE 检查双双不中 → RETRYING
+    apnManager->apnHolders_.push_back(makeHolder(DATA_CONTEXT_ROLE_DEFAULT,
+        ApnProfileState::PROFILE_STATE_FAILED));
+    apnManager->apnHolders_.push_back(makeHolder(DATA_CONTEXT_ROLE_INTERNAL_DEFAULT,
+        ApnProfileState::PROFILE_STATE_RETRYING));
+    EXPECT_EQ(apnManager->GetOverallDefaultApnState(), ApnProfileState::PROFILE_STATE_RETRYING);
+}
+namespace {
+/*
+ * b8 批基建：CellularDataRdbHelper 单例注入缝隙。
+ * 经 #define private public 直接改写 DelayedSingleton<CellularDataRdbHelper>::instance_
+ * （ScopedSetter RAII 守卫还原），配合 CreateDataAbilityHelper 虚函数缝隙
+ * （对齐 cellular_data_rdb_helper_test 的 TestRdbHelper 模式），
+ * 使 ApnManager::GetPreferId / CreateMvnoApnItems 走到受控的 DataShare 分支，
+ * 不触达真机 APN 库。
+ */
+class ApnMgrRdbStub : public CellularDataRdbHelper {
+public:
+    ApnMgrRdbStub() = default;
+    ~ApnMgrRdbStub() = default;
+    std::shared_ptr<DataShare::DataShareHelper> helperToReturn_ = nullptr;
+
+    std::shared_ptr<DataShare::DataShareHelper> CreateDataAbilityHelper(const int waitTime) override
+    {
+        return helperToReturn_;
+    }
+};
+
+// 简化结果集 wiring（列名→值映射，同 rdb_helper_test 模式；仅本批用例使用，进入用例时显式清零）
+int32_t g_apnRowCnt = 0;
+std::map<std::string, std::string> g_apnColStr;
+std::map<std::string, int32_t> g_apnColInt;
+std::map<std::string, int32_t> g_apnColIdx;
+std::map<int32_t, std::string> g_apnIdxName;
+
+void ResetApnResultSet()
+{
+    g_apnRowCnt = 0;
+    g_apnColStr.clear();
+    g_apnColInt.clear();
+    g_apnColIdx.clear();
+    g_apnIdxName.clear();
+}
+
+void SetupApnResultSet(const std::shared_ptr<DataShareResultSetMock> &rs)
+{
+    ON_CALL(*rs, GetRowCount(_))
+        .WillByDefault(Invoke([](int &count) {
+            count = g_apnRowCnt;
+            return 0;
+        }));
+    ON_CALL(*rs, GoToRow(_)).WillByDefault(Return(0));
+    ON_CALL(*rs, Close()).WillByDefault(Return(0));
+    ON_CALL(*rs, GetColumnIndex(_, _))
+        .WillByDefault(Invoke([](const std::string &columnName, int &columnIndex) {
+            auto it = g_apnColIdx.find(columnName);
+            if (it == g_apnColIdx.end()) {
+                int id = static_cast<int>(g_apnColIdx.size());
+                g_apnColIdx[columnName] = id;
+                g_apnIdxName[id] = columnName;
+                it = g_apnColIdx.find(columnName);
+            }
+            columnIndex = it->second;
+            return 0;
+        }));
+    ON_CALL(*rs, GetString(_, _))
+        .WillByDefault(Invoke([](int columnIndex, std::string &value) {
+            auto nameIt = g_apnIdxName.find(columnIndex);
+            std::string name = (nameIt != g_apnIdxName.end()) ? nameIt->second : "";
+            auto valIt = g_apnColStr.find(name);
+            value = (valIt != g_apnColStr.end()) ? valIt->second : "";
+            return 0;
+        }));
+    ON_CALL(*rs, GetInt(_, _))
+        .WillByDefault(Invoke([](int columnIndex, int &value) {
+            auto nameIt = g_apnIdxName.find(columnIndex);
+            std::string name = (nameIt != g_apnIdxName.end()) ? nameIt->second : "";
+            auto valIt = g_apnColInt.find(name);
+            value = (valIt != g_apnColInt.end()) ? valIt->second : 0;
+            return 0;
+        }));
+}
+} // namespace
+
+/**
+ * @tc.number   ApnManager_GetPreferId_002
+ * @tc.name     test GetPreferId with valid sim id but rdb helper creation fail
+ * @tc.desc     simId 有效越过早退；DataShare helper 为 null → QueryPreferApn 失败 → 返回 false
+ */
+HWTEST_F(ApnManagerTest, ApnManager_GetPreferId_002, TestSize.Level0)
+{
+    ScopedCoreMock core;
+    EXPECT_CALL(*core.simMock_, GetSimId(_)).WillRepeatedly(Return(1));
+    auto stub = std::make_shared<ApnMgrRdbStub>();
+    ScopedSetter<std::shared_ptr<CellularDataRdbHelper>> rdbGuard(
+        DelayedSingleton<CellularDataRdbHelper>::instance_, stub);
+    std::string errMsg = "";
+    EXPECT_FALSE(apnManager->GetPreferId(0, errMsg));
+}
+
+/**
+ * @tc.number   ApnManager_GetPreferId_003
+ * @tc.name     test GetPreferId with query success but empty prefer apn
+ * @tc.desc     QueryPreferApn 成功且结果为空 → 返回 true，preferId_ 不变
+ */
+HWTEST_F(ApnManagerTest, ApnManager_GetPreferId_003, TestSize.Level0)
+{
+    ScopedCoreMock core;
+    EXPECT_CALL(*core.simMock_, GetSimId(_)).WillRepeatedly(Return(1));
+    ResetApnResultSet();
+    g_apnRowCnt = 0;
+    auto rs = std::make_shared<DataShareResultSetMock>();
+    SetupApnResultSet(rs);
+    auto helper = std::make_shared<MockDataShareHelper>();
+    ON_CALL(*helper, Release()).WillByDefault(Return(true));
+    ON_CALL(*helper, Query(_, _, _, _)).WillByDefault(Return(rs));
+    auto stub = std::make_shared<ApnMgrRdbStub>();
+    stub->helperToReturn_ = helper;
+    ScopedSetter<std::shared_ptr<CellularDataRdbHelper>> rdbGuard(
+        DelayedSingleton<CellularDataRdbHelper>::instance_, stub);
+    std::string errMsg = "";
+    EXPECT_TRUE(apnManager->GetPreferId(0, errMsg));
+    EXPECT_EQ(apnManager->preferId_, static_cast<int32_t>(INVALID_PROFILE_ID));
+}
+
+/**
+ * @tc.number   ApnManager_GetPreferId_004
+ * @tc.name     test GetPreferId with one prefer apn row
+ * @tc.desc     QueryPreferApn 成功且返回 1 行 → preferId_ 取该行 PROFILE_ID
+ */
+HWTEST_F(ApnManagerTest, ApnManager_GetPreferId_004, TestSize.Level0)
+{
+    ScopedCoreMock core;
+    EXPECT_CALL(*core.simMock_, GetSimId(_)).WillRepeatedly(Return(1));
+    ResetApnResultSet();
+    g_apnRowCnt = 1;
+    g_apnColInt[PdpProfileData::PROFILE_ID] = 7;
+    auto rs = std::make_shared<DataShareResultSetMock>();
+    SetupApnResultSet(rs);
+    auto helper = std::make_shared<MockDataShareHelper>();
+    ON_CALL(*helper, Release()).WillByDefault(Return(true));
+    ON_CALL(*helper, Query(_, _, _, _)).WillByDefault(Return(rs));
+    auto stub = std::make_shared<ApnMgrRdbStub>();
+    stub->helperToReturn_ = helper;
+    ScopedSetter<std::shared_ptr<CellularDataRdbHelper>> rdbGuard(
+        DelayedSingleton<CellularDataRdbHelper>::instance_, stub);
+    std::string errMsg = "";
+    EXPECT_TRUE(apnManager->GetPreferId(0, errMsg));
+    EXPECT_EQ(apnManager->preferId_, 7);
+}
+
+/**
+ * @tc.number   CreateMvnoApnItems_002
+ * @tc.name     test CreateMvnoApnItems with non-empty spn and null rdb helper
+ * @tc.desc     SPN 非空 → SPN 查询走 helper → helper 为 null → 查询失败早退
+ */
+HWTEST_F(ApnManagerTest, CreateMvnoApnItems_002, TestSize.Level0)
+{
+    ScopedCoreMock core;
+    EXPECT_CALL(*core.simMock_, GetSimSpn(_, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(std::u16string(u"CMCC")), Return(0)));
+    auto stub = std::make_shared<ApnMgrRdbStub>();
+    ScopedSetter<std::shared_ptr<CellularDataRdbHelper>> rdbGuard(
+        DelayedSingleton<CellularDataRdbHelper>::instance_, stub);
+    EXPECT_EQ(apnManager->CreateMvnoApnItems(0, "460", "00"), 0);
+}
+
+/**
+ * @tc.number   CreateMvnoApnItems_003
+ * @tc.name     test CreateMvnoApnItems with non-empty imsi
+ * @tc.desc     SPN 为空（查询早退成功）→ IMSI 非空 → IMSI 查询失败早退
+ */
+HWTEST_F(ApnManagerTest, CreateMvnoApnItems_003, TestSize.Level0)
+{
+    ScopedCoreMock core;
+    EXPECT_CALL(*core.simMock_, GetIMSI(_, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(std::u16string(u"460001234567890")), Return(0)));
+    auto stub = std::make_shared<ApnMgrRdbStub>();
+    ScopedSetter<std::shared_ptr<CellularDataRdbHelper>> rdbGuard(
+        DelayedSingleton<CellularDataRdbHelper>::instance_, stub);
+    EXPECT_EQ(apnManager->CreateMvnoApnItems(0, "460", "00"), 0);
+}
+
+/**
+ * @tc.number   CreateMvnoApnItems_004
+ * @tc.name     test CreateMvnoApnItems with non-empty gid1
+ * @tc.desc     SPN/IMSI 为空（查询早退成功）→ GID1 非空 → GID1 查询失败早退
+ */
+HWTEST_F(ApnManagerTest, CreateMvnoApnItems_004, TestSize.Level0)
+{
+    ScopedCoreMock core;
+    EXPECT_CALL(*core.simMock_, GetSimGid1(_, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(std::u16string(u"GID1DATA")), Return(0)));
+    auto stub = std::make_shared<ApnMgrRdbStub>();
+    ScopedSetter<std::shared_ptr<CellularDataRdbHelper>> rdbGuard(
+        DelayedSingleton<CellularDataRdbHelper>::instance_, stub);
+    EXPECT_EQ(apnManager->CreateMvnoApnItems(0, "460", "00"), 0);
+}
+
+/**
+ * @tc.number   CreateMvnoApnItems_005
+ * @tc.name     test CreateMvnoApnItems with non-empty iccId
+ * @tc.desc     SPN/IMSI/GID1 为空（查询早退成功）→ ICCID 非空 → ICCID 查询失败早退
+ */
+HWTEST_F(ApnManagerTest, CreateMvnoApnItems_005, TestSize.Level0)
+{
+    ScopedCoreMock core;
+    EXPECT_CALL(*core.simMock_, GetSimIccId(_, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(std::u16string(u"89860012345678901234")), Return(0)));
+    auto stub = std::make_shared<ApnMgrRdbStub>();
+    ScopedSetter<std::shared_ptr<CellularDataRdbHelper>> rdbGuard(
+        DelayedSingleton<CellularDataRdbHelper>::instance_, stub);
+    EXPECT_EQ(apnManager->CreateMvnoApnItems(0, "460", "00"), 0);
+}
+
+/**
+ * @tc.number   GetRilAttachApn_005
+ * @tc.name     test GetRilAttachApn with default first then ia
+ * @tc.desc     先记录 DEFAULT 再被 IA 覆盖 break → 返回 IA 项
+ */
+HWTEST_F(ApnManagerTest, GetRilAttachApn_005, TestSize.Level0)
+{
+    std::vector<sptr<ApnItem>> allApnItem;
+    sptr<ApnItem> defaultApn = ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_DEFAULT);
+    sptr<ApnItem> iaApn = ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_IA);
+    allApnItem.push_back(defaultApn);
+    allApnItem.push_back(iaApn);
+    apnManager->allApnItem_ = allApnItem;
+    EXPECT_EQ(apnManager->GetRilAttachApn(), iaApn);
+}
+
+/**
+ * @tc.number   GetRilAttachApn_006
+ * @tc.name     test GetRilAttachApn with two default items
+ * @tc.desc     第二项 DEFAULT 查询因 attachApn 非空短路 → 返回首个 DEFAULT 项
+ */
+HWTEST_F(ApnManagerTest, GetRilAttachApn_006, TestSize.Level0)
+{
+    std::vector<sptr<ApnItem>> allApnItem;
+    sptr<ApnItem> first = ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_DEFAULT);
+    sptr<ApnItem> second = ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_DEFAULT);
+    allApnItem.push_back(first);
+    allApnItem.push_back(second);
+    apnManager->allApnItem_ = allApnItem;
+    EXPECT_EQ(apnManager->GetRilAttachApn(), first);
+}
+
+/**
+ * @tc.number   GetRilAttachApn_007
+ * @tc.name     test GetRilAttachApn with wildcard apn
+ * @tc.desc     "*" 通配项：IA 查询不匹配（IA 排除通配）→ DEFAULT 查询经通配弧匹配
+ */
+HWTEST_F(ApnManagerTest, GetRilAttachApn_007, TestSize.Level0)
+{
+    std::vector<sptr<ApnItem>> allApnItem;
+    sptr<ApnItem> wildcard = ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_ALL);
+    sptr<ApnItem> mmsApn = ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_MMS);
+    allApnItem.push_back(wildcard);
+    allApnItem.push_back(mmsApn);
+    apnManager->allApnItem_ = allApnItem;
+    EXPECT_EQ(apnManager->GetRilAttachApn(), wildcard);
+}
+
+/**
+ * @tc.number   GetRilAttachApn_008
+ * @tc.name     test GetRilAttachApn with no ia/default-capable item
+ * @tc.desc     全表无匹配 → 兜底返回 allApnItem_[0]
+ */
+HWTEST_F(ApnManagerTest, GetRilAttachApn_008, TestSize.Level0)
+{
+    std::vector<sptr<ApnItem>> allApnItem;
+    sptr<ApnItem> mmsApn = ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_MMS);
+    sptr<ApnItem> dunApn = ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_DUN);
+    allApnItem.push_back(mmsApn);
+    allApnItem.push_back(dunApn);
+    apnManager->allApnItem_ = allApnItem;
+    EXPECT_EQ(apnManager->GetRilAttachApn(), mmsApn);
+}
+
+/**
+ * @tc.number   GetRilAttachApn_009
+ * @tc.name     test GetRilAttachApn with multi-type single apn
+ * @tc.desc     "ia,default" 多类型单项 → 首次迭代 IA 命中即 break
+ */
+HWTEST_F(ApnManagerTest, GetRilAttachApn_009, TestSize.Level0)
+{
+    std::vector<sptr<ApnItem>> allApnItem;
+    sptr<ApnItem> multiType = ApnItem::MakeDefaultApn("ia,default");
+    allApnItem.push_back(multiType);
+    apnManager->allApnItem_ = allApnItem;
+    EXPECT_EQ(apnManager->GetRilAttachApn(), multiType);
+}
+
+/**
+ * @tc.number   ApnManager_GetOverallApnState_003
+ * @tc.name     test overall apn state with null/connecting/idle holder matrix
+ * @tc.desc     null 项 continue；CONNECTING → 聚合 CONNECTING；仅 IDLE → 聚合 IDLE
+ */
+HWTEST_F(ApnManagerTest, ApnManager_GetOverallApnState_003, TestSize.Level0)
+{
+    auto makeHolder = [](ApnProfileState state) {
+        sptr<ApnHolder> holder = std::make_unique<ApnHolder>(DATA_CONTEXT_ROLE_DEFAULT,
+            static_cast<int32_t>(DataContextPriority::PRIORITY_LOW)).release();
+        holder->apnState_ = state;
+        return holder;
+    };
+    // 1) null + CONNECTED → HasAnyConnectedState 命中（null continue 弧）
+    apnManager->apnHolders_.push_back(nullptr);
+    apnManager->apnHolders_.push_back(makeHolder(ApnProfileState::PROFILE_STATE_CONNECTED));
+    EXPECT_EQ(apnManager->GetOverallApnState(), ApnProfileState::PROFILE_STATE_CONNECTED);
+    apnManager->apnHolders_.clear();
+    // 2) CONNECTING → 聚合 CONNECTING
+    apnManager->apnHolders_.push_back(makeHolder(ApnProfileState::PROFILE_STATE_CONNECTING));
+    EXPECT_EQ(apnManager->GetOverallApnState(), ApnProfileState::PROFILE_STATE_CONNECTING);
+    apnManager->apnHolders_.clear();
+    // 3) 仅 IDLE → failState → 聚合 IDLE
+    apnManager->apnHolders_.push_back(makeHolder(ApnProfileState::PROFILE_STATE_IDLE));
+    EXPECT_EQ(apnManager->GetOverallApnState(), ApnProfileState::PROFILE_STATE_IDLE);
+}
+
+/**
+ * @tc.number   ApnManager_GetOverallDefaultApnState_003
+ * @tc.name     test overall default apn state with null item and both role holders
+ * @tc.desc     null 项 continue；DEFAULT/INTERNAL_DEFAULT 双 holder 状态聚合；双 IDLE → 最终 IDLE
+ */
+HWTEST_F(ApnManagerTest, ApnManager_GetOverallDefaultApnState_003, TestSize.Level0)
+{
+    auto makeHolder = [](const std::string &type, ApnProfileState state) {
+        sptr<ApnHolder> holder = std::make_unique<ApnHolder>(type,
+            static_cast<int32_t>(DataContextPriority::PRIORITY_LOW)).release();
+        holder->apnState_ = state;
+        return holder;
+    };
+    // 1) null + 双角色 CONNECTED/CONNECTING → 按优先级数组命中 CONNECTED
+    apnManager->apnHolders_.push_back(nullptr);
+    apnManager->apnHolders_.push_back(makeHolder(DATA_CONTEXT_ROLE_DEFAULT,
+        ApnProfileState::PROFILE_STATE_CONNECTED));
+    apnManager->apnHolders_.push_back(makeHolder(DATA_CONTEXT_ROLE_INTERNAL_DEFAULT,
+        ApnProfileState::PROFILE_STATE_CONNECTING));
+    EXPECT_EQ(apnManager->GetOverallDefaultApnState(), ApnProfileState::PROFILE_STATE_CONNECTED);
+    apnManager->apnHolders_.clear();
+    // 2) 双角色均 IDLE → 优先级数组全不中 → 最终 IDLE
+    apnManager->apnHolders_.push_back(makeHolder(DATA_CONTEXT_ROLE_DEFAULT,
+        ApnProfileState::PROFILE_STATE_IDLE));
+    apnManager->apnHolders_.push_back(makeHolder(DATA_CONTEXT_ROLE_INTERNAL_DEFAULT,
+        ApnProfileState::PROFILE_STATE_IDLE));
+    EXPECT_EQ(apnManager->GetOverallDefaultApnState(), ApnProfileState::PROFILE_STATE_IDLE);
+}
+
+/**
+ * @tc.number   HasAnyConnectedState_005
+ * @tc.name     test HasAnyConnectedState with null then connected holder
+ * @tc.desc     null 项 continue 后命中 CONNECTED → true
+ */
+HWTEST_F(ApnManagerTest, HasAnyConnectedState_005, TestSize.Level0)
+{
+    sptr<ApnHolder> holder = std::make_unique<ApnHolder>(DATA_CONTEXT_ROLE_DEFAULT,
+        static_cast<int32_t>(DataContextPriority::PRIORITY_LOW)).release();
+    holder->apnState_ = ApnProfileState::PROFILE_STATE_CONNECTED;
+    apnManager->apnHolders_.push_back(nullptr);
+    apnManager->apnHolders_.push_back(holder);
+    EXPECT_TRUE(apnManager->HasAnyConnectedState());
+}
+
+/**
+ * @tc.number   HasAnyConnectedState_006
+ * @tc.name     test HasAnyConnectedState with connecting holder only
+ * @tc.desc     CONNECTING 不属于连接态 → false
+ */
+HWTEST_F(ApnManagerTest, HasAnyConnectedState_006, TestSize.Level0)
+{
+    sptr<ApnHolder> holder = std::make_unique<ApnHolder>(DATA_CONTEXT_ROLE_DEFAULT,
+        static_cast<int32_t>(DataContextPriority::PRIORITY_LOW)).release();
+    holder->apnState_ = ApnProfileState::PROFILE_STATE_CONNECTING;
+    apnManager->apnHolders_.push_back(holder);
+    EXPECT_FALSE(apnManager->HasAnyConnectedState());
+}
+
+/**
+ * @tc.number   ApnManager_FilterMatchedApns_001
+ * @tc.name     test FilterMatchedApns type matching matrix
+ * @tc.desc     INTERNAL_DEFAULT→default 隐式匹配弧、default→"*" 通配弧、ia→"*" 不匹配弧、多类型迭代弧
+ */
+HWTEST_F(ApnManagerTest, ApnManager_FilterMatchedApns_001, TestSize.Level0)
+{
+    apnManager->allApnItem_.clear();
+    sptr<ApnItem> defaultApn = ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_DEFAULT);
+    apnManager->allApnItem_.push_back(defaultApn);
+    // 1) INTERNAL_DEFAULT 请求 → default 项经隐式弧匹配
+    EXPECT_EQ(apnManager->FilterMatchedApns(DATA_CONTEXT_ROLE_INTERNAL_DEFAULT, 0).size(), 1);
+    apnManager->allApnItem_.clear();
+    // 2) default 请求 → "*" 通配项匹配
+    sptr<ApnItem> wildcard = ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_ALL);
+    apnManager->allApnItem_.push_back(wildcard);
+    EXPECT_EQ(apnManager->FilterMatchedApns(DATA_CONTEXT_ROLE_DEFAULT, 0).size(), 1);
+    // 3) ia 请求 → "*" 通配项不匹配（IA 排除通配）
+    EXPECT_EQ(apnManager->FilterMatchedApns(DATA_CONTEXT_ROLE_IA, 0).size(), 0);
+    apnManager->allApnItem_.clear();
+    // 4) mms 请求 → 多类型项第二段命中
+    sptr<ApnItem> multiType = ApnItem::MakeDefaultApn("default,mms");
+    apnManager->allApnItem_.push_back(multiType);
+    EXPECT_EQ(apnManager->FilterMatchedApns(DATA_CONTEXT_ROLE_MMS, 0).size(), 1);
+}
+
+/**
+ * @tc.number   FetchBipApns_002
+ * @tc.name     test FetchBipApns with wildcard apn
+ * @tc.desc     "*" 通配项经 BIP 查询通配弧命中收集；无 BIP 能力项不收集
+ */
+HWTEST_F(ApnManagerTest, FetchBipApns_002, TestSize.Level0)
+{
+    apnManager->allApnItem_.clear();
+    sptr<ApnItem> wildcard = ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_ALL);
+    apnManager->allApnItem_.push_back(wildcard);
+    std::vector<sptr<ApnItem>> bipList;
+    apnManager->FetchBipApns(bipList);
+    ASSERT_EQ(bipList.size(), 1);
+    EXPECT_EQ(bipList[0], wildcard);
+    // ia 项（通配排除 IA）不命中
+    apnManager->allApnItem_.clear();
+    apnManager->allApnItem_.push_back(ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_IA));
+    bipList.clear();
+    apnManager->FetchBipApns(bipList);
+    EXPECT_TRUE(bipList.empty());
+}
+
+/**
+ * @tc.number   ApnManager_FetchDunApns_003
+ * @tc.name     test FetchDunApns with wildcard prefer and wildcard scan item
+ * @tc.desc     非漫游 + "*" 通配偏好（DUN 通配弧命中）插入队首；无偏好时全表 "*" 项经通配弧收集
+ */
+HWTEST_F(ApnManagerTest, ApnManager_FetchDunApns_003, TestSize.Level0)
+{
+    ScopedCoreMock core;
+    EXPECT_CALL(*core.simMock_, GetSimId(_)).WillRepeatedly(Return(1));
+    EXPECT_CALL(*core.nssMock_, GetPsRoamingState(_)).WillRepeatedly(Return(0));
+    auto stub = std::make_shared<ApnMgrRdbStub>();
+    ScopedSetter<std::shared_ptr<CellularDataRdbHelper>> rdbGuard(
+        DelayedSingleton<CellularDataRdbHelper>::instance_, stub);
+    // 1) 偏好 "*" 通配项 → CanDealWithType(DUN) 通配弧命中 → 插入队首
+    apnManager->preferId_ = 5;
+    sptr<ApnItem> wildcardPrefer = ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_ALL);
+    wildcardPrefer->attr_.profileId_ = 5;
+    apnManager->allApnItem_.clear();
+    apnManager->allApnItem_.push_back(wildcardPrefer);
+    std::vector<sptr<ApnItem>> matchList;
+    apnManager->FetchDunApns(matchList, 0);
+    ASSERT_EQ(matchList.size(), 1);
+    EXPECT_EQ(matchList[0], wildcardPrefer);
+    // 2) 偏好未命中 + 空列表 → 全表 "*" 项经通配弧收集
+    apnManager->preferId_ = 99;
+    apnManager->allApnItem_.clear();
+    sptr<ApnItem> wildcardItem = ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_ALL);
+    apnManager->allApnItem_.push_back(wildcardItem);
+    matchList.clear();
+    apnManager->FetchDunApns(matchList, 0);
+    ASSERT_EQ(matchList.size(), 1);
+    EXPECT_EQ(matchList[0], wildcardItem);
+}
+
+/**
+ * @tc.number   GetNextRetryApnItem_008
+ * @tc.name     test GetNextRetryApnItem skipping bad apn
+ * @tc.desc     首项 bad → 复位计数并前进索引 → 递归返回次项 good
+ */
+HWTEST_F(ApnManagerTest, GetNextRetryApnItem_008, TestSize.Level0)
+{
+    std::shared_ptr<ConnectionRetryPolicy> policy = std::make_shared<ConnectionRetryPolicy>();
+    sptr<ApnItem> badApn = ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_DEFAULT);
+    badApn->MarkBadApn(true);
+    sptr<ApnItem> goodApn = ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_DEFAULT);
+    policy->matchedApns_.push_back(badApn);
+    policy->matchedApns_.push_back(goodApn);
+    policy->currentApnIndex_ = 0;
+    EXPECT_EQ(policy->GetNextRetryApnItem(), goodApn);
+}
+
+/**
+ * @tc.number   GetNextRetryApnItem_009
+ * @tc.name     test GetNextRetryApnItem with try count exceeding max
+ * @tc.desc     tryCount 超过 maxCount → 复位并前进索引 → 越界复位后返回同项
+ */
+HWTEST_F(ApnManagerTest, GetNextRetryApnItem_009, TestSize.Level0)
+{
+    std::shared_ptr<ConnectionRetryPolicy> policy = std::make_shared<ConnectionRetryPolicy>();
+    sptr<ApnItem> goodApn = ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_DEFAULT);
+    policy->matchedApns_.push_back(goodApn);
+    policy->tryCount_ = 5;
+    policy->maxCount_ = 5;
+    policy->currentApnIndex_ = 0;
+    EXPECT_EQ(policy->GetNextRetryApnItem(), goodApn);
+    EXPECT_EQ(policy->currentApnIndex_, 0);
+    EXPECT_EQ(policy->tryCount_, 1);
+}
+
+/**
+ * @tc.number   GetNextRetryApnItem_010
+ * @tc.name     test GetNextRetryApnItem with null apn item
+ * @tc.desc     索引指向 null 项 → 首条件短路（IsAllBadApn 无判空，故 null 项不能是首元素）→ 返回 null
+ */
+HWTEST_F(ApnManagerTest, GetNextRetryApnItem_010, TestSize.Level0)
+{
+    std::shared_ptr<ConnectionRetryPolicy> policy = std::make_shared<ConnectionRetryPolicy>();
+    sptr<ApnItem> goodApn = ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_DEFAULT);
+    policy->matchedApns_.push_back(goodApn);
+    policy->matchedApns_.push_back(nullptr);
+    policy->currentApnIndex_ = 1;
+    EXPECT_EQ(policy->GetNextRetryApnItem(), nullptr);
+}
+
+/**
+ * @tc.number   SetMatchedApns_002
+ * @tc.name     test SetMatchedApns with same size but mismatched profile id
+ * @tc.desc     同长度且 profileId 不一致 → 复位 currentApnIndex_
+ */
+HWTEST_F(ApnManagerTest, SetMatchedApns_002, TestSize.Level0)
+{
+    std::shared_ptr<ConnectionRetryPolicy> policy = std::make_shared<ConnectionRetryPolicy>();
+    sptr<ApnItem> oldApn = ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_DEFAULT);
+    oldApn->attr_.profileId_ = 1;
+    policy->matchedApns_.push_back(oldApn);
+    policy->currentApnIndex_ = 3;
+    std::vector<sptr<ApnItem>> newApns;
+    sptr<ApnItem> newApn = ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_DEFAULT);
+    newApn->attr_.profileId_ = 2;
+    newApns.push_back(newApn);
+    policy->SetMatchedApns(newApns);
+    EXPECT_EQ(policy->currentApnIndex_, 0);
+    EXPECT_EQ(policy->GetMatchedApns().size(), 1);
+}
+
+/**
+ * @tc.number   SetMatchedApns_003
+ * @tc.name     test SetMatchedApns with null elements in same-size lists
+ * @tc.desc     同长度但存在 null 元素 → 跳过比较直接替换
+ */
+HWTEST_F(ApnManagerTest, SetMatchedApns_003, TestSize.Level0)
+{
+    std::shared_ptr<ConnectionRetryPolicy> policy = std::make_shared<ConnectionRetryPolicy>();
+    policy->matchedApns_.push_back(nullptr);
+    policy->currentApnIndex_ = 3;
+    std::vector<sptr<ApnItem>> newApns;
+    sptr<ApnItem> newApn = ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_DEFAULT);
+    newApns.push_back(newApn);
+    policy->SetMatchedApns(newApns);
+    EXPECT_EQ(policy->currentApnIndex_, 3);
+    ASSERT_EQ(policy->GetMatchedApns().size(), 1);
+    EXPECT_EQ(policy->GetMatchedApns()[0], newApn);
+}
+
+/**
+ * @tc.number   OnPropChanged_002
+ * @tc.name     test OnPropChanged with partially parsed numeric value
+ * @tc.desc     "30x" 半解析（ec 成功但未到串尾）→ ConvertStrToInt 失败 → 延迟值不变
+ */
+HWTEST_F(ApnManagerTest, OnPropChanged_002, TestSize.Level0)
+{
+    std::shared_ptr<ConnectionRetryPolicy> policy = std::make_shared<ConnectionRetryPolicy>();
+    ConnectionRetryPolicy::defaultSetupFailDelay_ = 2222;
+    policy->OnPropChanged("persist.telephony.setupfail.delay", "30x", nullptr);
+    // from_chars 半解析（ec 成功但未到串尾）→ 返回 false 走日志分支，但已把 30 写入出参（现行为）
+    EXPECT_EQ(ConnectionRetryPolicy::defaultSetupFailDelay_, 30);
+    policy->OnPropChanged("persist.telephony.modemdend.delay", "40y", nullptr);
+    // 结束前构造新策略，经真实系统属性还原类级静态值，不向后续用例泄漏
+    std::make_shared<ConnectionRetryPolicy>();
+}
+
+/**
+ * @tc.number   GetNextRetryDelay_003
+ * @tc.name     test GetNextRetryDelay in modem deactivate scene
+ * @tc.desc     DEFAULT 类型 + RETRY_SCENE_MODEM_DEACTIVATE → 走 modemDend 延迟分支
+ */
+HWTEST_F(ApnManagerTest, GetNextRetryDelay_003, TestSize.Level0)
+{
+    std::shared_ptr<ConnectionRetryPolicy> policy = std::make_shared<ConnectionRetryPolicy>();
+    auto delay = policy->GetNextRetryDelay(DATA_CONTEXT_ROLE_DEFAULT, 0, 0,
+        RetryScene::RETRY_SCENE_MODEM_DEACTIVATE, false);
+    EXPECT_GE(delay, 0);
+}
+
+/**
+ * @tc.number   IsAllBadApn_002
+ * @tc.name     test IsAllBadApn with bad first then good
+ * @tc.desc     首项 bad 走完循环继续迭代 → 次项 good 判 false 返回
+ */
+HWTEST_F(ApnManagerTest, IsAllBadApn_002, TestSize.Level0)
+{
+    std::shared_ptr<ConnectionRetryPolicy> policy = std::make_shared<ConnectionRetryPolicy>();
+    sptr<ApnItem> badApn = ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_DEFAULT);
+    badApn->MarkBadApn(true);
+    sptr<ApnItem> goodApn = ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_DEFAULT);
+    goodApn->MarkBadApn(false);
+    policy->matchedApns_.push_back(badApn);
+    policy->matchedApns_.push_back(goodApn);
+    EXPECT_FALSE(policy->IsAllBadApn());
+}
+
+/**
+ * @tc.number   ApnItem_MakeApn_OverlongFields_001
+ * @tc.name     test MakeApn with each overlong field
+ * @tc.desc     逐一将单个字段置为超长串（> ALL_APN_ITEM_CHAR_LENGTH=256）→
+ *              对应 strcpy_s 失败早退返回 nullptr，覆盖 12 处拷贝失败弧
+ */
+HWTEST_F(ApnManagerTest, ApnItem_MakeApn_OverlongFields_001, TestSize.Level0)
+{
+    const std::string huge(300, 'x');
+    const std::string normal = "normal";
+    for (int field = 0; field < 12; ++field) {
+        PdpProfile profile;
+        profile.profileId = 1;
+        profile.apnTypes = normal;
+        profile.mcc = "460";
+        profile.mnc = "00";
+        profile.pdpProtocol = normal;
+        profile.roamPdpProtocol = normal;
+        profile.apn = normal;
+        profile.profileName = normal;
+        profile.authUser = normal;
+        profile.authPwd = normal;
+        profile.homeUrl = normal;
+        profile.proxyIpAddress = normal;
+        profile.mmsIpAddress = normal;
+        switch (field) {
+            case 0: profile.apnTypes = huge; break;          // L95 types_
+            case 1: profile.mcc = huge; break;               // L100 numeric_(mcc+mnc)
+            case 2: profile.pdpProtocol = huge; break;       // L104 protocol_
+            case 3: profile.roamPdpProtocol = huge; break;   // L108 roamingProtocol_
+            case 4: profile.apn = huge; break;               // L113 apn_
+            case 5: profile.profileName = huge; break;       // L117 apnName_
+            case 6: profile.authUser = huge; break;          // L121 user_
+            case 7: profile.authPwd = huge; break;           // L125 password_
+            case 8: profile.homeUrl = huge; break;           // L134 homeUrl_（BuildOther）
+            case 9: profile.proxyIpAddress = huge; break;    // L138 proxyIpAddress_（BuildOther）
+            case 10: profile.mmsIpAddress = huge; break;     // L142 mmsIpAddress_（BuildOther）
+            case 11: profile.mnc = huge; break;              // L100 numeric_ 另一来源
+            default: break;
+        }
+        EXPECT_EQ(ApnItem::MakeApn(profile), nullptr);
+    }
+}
+
+/**
+ * @tc.number   ApnItem_MakeDefaultApn_Overlong_001
+ * @tc.name     test MakeDefaultApn with overlong apn type string
+ * @tc.desc     超长类型串 → attr_.types_ 拷贝失败 → 返回 nullptr
+ */
+HWTEST_F(ApnManagerTest, ApnItem_MakeDefaultApn_Overlong_001, TestSize.Level0)
+{
+    EXPECT_EQ(ApnItem::MakeDefaultApn(std::string(300, 'x')), nullptr);
+}
+
+/**
+ * @tc.number   ApnItem_IsSimilarPdpProfile_003
+ * @tc.name     test IsSimilarPdpProfile with default-type containing apn types
+ * @tc.desc     首条件（双方 apnTypes 含 default 即判不相似）的各方向：
+ *              双含 → false；单侧含 → 进入字段比较
+ */
+HWTEST_F(ApnManagerTest, ApnItem_IsSimilarPdpProfile_003, TestSize.Level0)
+{
+    PdpProfile p1;
+    PdpProfile p2;
+    p1.apnTypes = "default,mms";
+    p2.apnTypes = "default";
+    // 双方均含 default → 直接判不相似
+    EXPECT_FALSE(ApnItem::IsSimilarPdpProfile(p1, p2));
+    // 仅 new 含 default → 越过首条件进入字段比较（字段一致 → 相似）
+    p2.apnTypes = "mms";
+    EXPECT_TRUE(ApnItem::IsSimilarPdpProfile(p1, p2));
+    // 仅 old 含 default → 同样进入字段比较
+    p1.apnTypes = "mms";
+    p2.apnTypes = "default";
+    EXPECT_TRUE(ApnItem::IsSimilarPdpProfile(p1, p2));
 }
 } // namespace Telephony
 } // namespace OHOS

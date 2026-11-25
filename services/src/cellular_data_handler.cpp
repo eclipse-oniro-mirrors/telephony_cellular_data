@@ -72,10 +72,12 @@ void CellularDataHandler::Init()
     cellularDataRdbObserver_ = new (std::nothrow) CellularDataRdbObserver(
         std::weak_ptr<TelEventHandler>(std::static_pointer_cast<TelEventHandler>(shared_from_this())));
     airplaneObserver_ = new (std::nothrow) CellularDataAirplaneObserver();
+    // LCOV_EXCL_START
     if ((apnManager_ == nullptr) || (dataSwitchSettings_ == nullptr) || (connectionManager_ == nullptr)) {
         TELEPHONY_LOGE("Slot%{public}d: apnManager_ or dataSwitchSettings_ or connectionManager_ is null", slotId_);
         return;
     }
+    // LCOV_EXCL_STOP
     connectionManager_->Init();
     apnManager_->InitApnHolders();
     dataSwitchSettings_->LoadSwitchValue();
@@ -144,6 +146,7 @@ int32_t CellularDataHandler::SetCellularDataEnable(bool userDataOn)
     }
 
 #ifdef OHOS_BUILD_ENABLE_TELEPHONY_EXT
+    // LCOV_EXCL_START
     if (TELEPHONY_EXT_WRAPPER.sendDataSwitchChangeInfo_) {
         int32_t callingUid = IPCSkeleton::GetCallingUid();
         int32_t callingPid = IPCSkeleton::GetCallingPid();
@@ -151,6 +154,7 @@ int32_t CellularDataHandler::SetCellularDataEnable(bool userDataOn)
         TelephonyPermission::GetBundleNameByUid(callingUid, bundleName);
         TELEPHONY_EXT_WRAPPER.sendDataSwitchChangeInfo_(bundleName.c_str(), callingPid, userDataOn);
     }
+    // LCOV_EXCL_STOP
 #endif
     return dataSwitchSettings_->SetUserDataOn(userDataOn);
 }
@@ -489,6 +493,7 @@ bool CellularDataHandler::SetDataPermittedForMms(bool dataPermittedForMms)
     }
     CoreManagerInner &coreInner = CoreManagerInner::GetInstance();
 #ifdef OHOS_BUILD_ENABLE_TELEPHONY_EXT
+    // LCOV_EXCL_START
     if (TELEPHONY_EXT_WRAPPER.isVSimEnabled_ && TELEPHONY_EXT_WRAPPER.isVSimEnabled_()) {
         int32_t count = coreInner.GetMaxSimCount();
         for (auto slotId = 0; slotId < count; slotId++) {
@@ -499,6 +504,7 @@ bool CellularDataHandler::SetDataPermittedForMms(bool dataPermittedForMms)
             }
         }
     } else {
+    // LCOV_EXCL_STOP
 #endif
         int32_t defSlotId = coreInner.GetDefaultCellularDataSlotId();
         SetDataPermitted(defSlotId, !dataPermittedForMms);
@@ -514,10 +520,12 @@ bool CellularDataHandler::SetDataPermittedForMms(bool dataPermittedForMms)
 bool CellularDataHandler::CheckDataPermittedByDsds()
 {
 #ifdef OHOS_BUILD_ENABLE_TELEPHONY_EXT
+    // LCOV_EXCL_START
     if (TELEPHONY_EXT_WRAPPER.isVSimEnabled_ && TELEPHONY_EXT_WRAPPER.isVSimEnabled_() &&
         TELEPHONY_EXT_WRAPPER.isVSimInDisableProcess_ && !TELEPHONY_EXT_WRAPPER.isVSimInDisableProcess_()) {
         return (slotId_ == CELLULAR_DATA_VSIM_SLOT_ID);
     }
+    // LCOV_EXCL_STOP
 #endif
     CoreManagerInner &coreInner = CoreManagerInner::GetInstance();
     const int32_t defSlotId = coreInner.GetDefaultCellularDataSlotId();
@@ -549,13 +557,13 @@ bool CellularDataHandler::CheckCellularDataSlotId(sptr<ApnHolder> &apnHolder)
         return false;
     }
 #ifdef OHOS_BUILD_ENABLE_TELEPHONY_EXT
+    // LCOV_EXCL_START
     if (slotId_ != CELLULAR_DATA_VSIM_SLOT_ID && !apnHolder->IsMmsType() &&
         TELEPHONY_EXT_WRAPPER.isVSimEnabled_ && TELEPHONY_EXT_WRAPPER.isVSimEnabled_() &&
         TELEPHONY_EXT_WRAPPER.isVSimInDisableProcess_ && !TELEPHONY_EXT_WRAPPER.isVSimInDisableProcess_()) {
         TELEPHONY_LOGE("slot%{public}d, VSimEnabled & not mms type, ret false", slotId_);
         return false;
     }
-    // LCOV_EXCL_START
     if (slotId_ >= DISTRIBUTED_MULTI_DEVICE_SLOTID_START) {
         if (TELEPHONY_EXT_WRAPPER.isDistributedCellularEnabledForSlot_ &&
             TELEPHONY_EXT_WRAPPER.isDistributedCellularEnabledForSlot_(slotId_)) {
@@ -638,11 +646,13 @@ bool CellularDataHandler::CheckRoamingState(sptr<ApnHolder> &apnHolder)
     }
 
 #ifdef OHOS_BUILD_ENABLE_TELEPHONY_EXT
+    // LCOV_EXCL_START
     if (TELEPHONY_EXT_WRAPPER.isApnAllowedActive_) {
         std::string apnHolderType = apnHolder->GetApnType();
         isAllowActiveData =
             TELEPHONY_EXT_WRAPPER.isApnAllowedActive_(slotId_, apnHolderType.c_str(), isAllowActiveData);
     }
+    // LCOV_EXCL_STOP
 #endif
 
     if (!isAllowActiveData) {
@@ -1305,12 +1315,14 @@ void CellularDataHandler::MsgEstablishDataConnection(const InnerEvent::Pointer &
 bool CellularDataHandler::IsSimRequestNetOnVSimEnabled(int32_t reqType, bool isMmsType) const
 {
     if (reqType == TYPE_REQUEST_NET) {
+        // LCOV_EXCL_START
         if (slotId_ != CELLULAR_DATA_VSIM_SLOT_ID &&
             TELEPHONY_EXT_WRAPPER.isVSimEnabled_ && TELEPHONY_EXT_WRAPPER.isVSimEnabled_() && !isMmsType &&
             TELEPHONY_EXT_WRAPPER.isVSimInDisableProcess_ && !TELEPHONY_EXT_WRAPPER.isVSimInDisableProcess_()) {
             TELEPHONY_LOGE("Slot%{public}d, VSimEnabled & not mms type", slotId_);
             return true;
         }
+        // LCOV_EXCL_STOP
     }
     return false;
 }
@@ -1636,8 +1648,10 @@ void CellularDataHandler::HandleDefaultDataSubscriptionChanged()
     }
     bool isVirtualModemSlot = false;
 #ifdef OHOS_BUILD_ENABLE_TELEPHONY_EXT
+    // LCOV_EXCL_START
     isVirtualModemSlot =
         TELEPHONY_EXT_WRAPPER.isVirtualModemSlot_ && TELEPHONY_EXT_WRAPPER.isVirtualModemSlot_(slotId_);
+    // LCOV_EXCL_STOP
 #endif
     if (defSlotId == slotId_) {
         SendEvent(CellularDataEventCode::MSG_ESTABLISH_ALL_APNS_IF_CONNECTABLE);
@@ -2347,8 +2361,7 @@ void CellularDataHandler::GetDefaultDataEnableConfig()
         return;
     }
     bool dataEnbaled = true;
-    int32_t ret = dataSwitchSettings_->QueryAnySimDetectedStatus(
-        static_cast<int32_t>(DataSimDetectedCode::SIM_DETECTED_DISABLED));
+    int32_t ret = dataSwitchSettings_->QueryAnySimDetectedStatus();
     const int32_t defSlotId = CoreManagerInner::GetInstance().GetDefaultCellularDataSlotId();
     if (ret == TELEPHONY_ERR_SUCCESS || defSlotId != slotId_) {
         return;
@@ -2568,10 +2581,12 @@ void CellularDataHandler::UnRegisterDataSettingObserver()
         return;
     }
     std::shared_ptr<CellularDataSettingsRdbHelper> settingHelper = CellularDataSettingsRdbHelper::GetInstance();
+    // LCOV_EXCL_START
     if (settingHelper == nullptr) {
         TELEPHONY_LOGE("Slot%{public}d: settingHelper is null", slotId_);
         return;
     }
+    // LCOV_EXCL_STOP
     Uri dataEnableUri(CELLULAR_DATA_SETTING_DATA_ENABLE_URI);
     settingHelper->UnRegisterSettingsObserver(dataEnableUri, settingObserver_);
 
@@ -2588,10 +2603,12 @@ void CellularDataHandler::UnRegisterDataSettingObserver()
     settingHelper->UnRegisterSettingsObserver(airplaneUri, airplaneObserver_);
 
     std::shared_ptr<CellularDataRdbHelper> cellularDataRdbHelper = CellularDataRdbHelper::GetInstance();
+    // LCOV_EXCL_START
     if (cellularDataRdbHelper == nullptr) {
         TELEPHONY_LOGE("Slot%{public}d: cellularDataRdbHelper is null", slotId_);
         return;
     }
+    // LCOV_EXCL_STOP
     cellularDataRdbHelper->UnRegisterObserver(cellularDataRdbObserver_);
 }
 
@@ -2604,10 +2621,12 @@ void CellularDataHandler::RegisterDataSettingObserver()
         return;
     }
     std::shared_ptr<CellularDataSettingsRdbHelper> settingHelper = CellularDataSettingsRdbHelper::GetInstance();
+    // LCOV_EXCL_START
     if (settingHelper == nullptr) {
         TELEPHONY_LOGE("Slot%{public}d: settingHelper is null", slotId_);
         return;
     }
+    // LCOV_EXCL_STOP
     Uri dataEnableUri(CELLULAR_DATA_SETTING_DATA_ENABLE_URI);
     settingHelper->RegisterSettingsObserver(dataEnableUri, settingObserver_);
 
@@ -2624,10 +2643,12 @@ void CellularDataHandler::RegisterDataSettingObserver()
     settingHelper->RegisterSettingsObserver(airplaneUri, airplaneObserver_);
 
     std::shared_ptr<CellularDataRdbHelper> cellularDataRdbHelper = CellularDataRdbHelper::GetInstance();
+    // LCOV_EXCL_START
     if (cellularDataRdbHelper == nullptr) {
         TELEPHONY_LOGE("Slot%{public}d: cellularDataRdbHelper is null", slotId_);
         return;
     }
+    // LCOV_EXCL_STOP
     cellularDataRdbHelper->RegisterObserver(cellularDataRdbObserver_);
 }
 

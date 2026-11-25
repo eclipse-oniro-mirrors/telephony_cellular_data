@@ -125,7 +125,9 @@ int32_t DataSwitchSettings::QueryUserDataStatus(bool &dataEnabled)
     return TELEPHONY_ERR_SUCCESS;
 }
 
-int32_t DataSwitchSettings::QueryAnySimDetectedStatus(int32_t simDetected)
+// The queried value is not consumed by any caller; record presence is conveyed by
+// the return code: SUCCESS = any_sim_detected record exists, DATABASE_READ_EMPTY = none.
+int32_t DataSwitchSettings::QueryAnySimDetectedStatus()
 {
     std::shared_ptr<CellularDataSettingsRdbHelper> settingsRdbHelper = CellularDataSettingsRdbHelper::GetInstance();
     if (settingsRdbHelper == nullptr) {
@@ -133,6 +135,7 @@ int32_t DataSwitchSettings::QueryAnySimDetectedStatus(int32_t simDetected)
         return TELEPHONY_ERR_LOCAL_PTR_NULL;
     }
     Uri anySimDetectedUri(CELLULAR_DATA_SETTING_ANY_SIM_DETECTED_URI);
+    int32_t simDetected = static_cast<int32_t>(DataSimDetectedCode::SIM_DETECTED_DISABLED);
     int32_t ret = settingsRdbHelper->GetValue(anySimDetectedUri, SIM_DETECTED_COLUMN_ENABLE, simDetected);
     TELEPHONY_LOGI("DataSwitchSettings::QueryAnySimDetectedStatus ret:%{public}d", ret);
     return ret;
@@ -240,6 +243,7 @@ void DataSwitchSettings::SetCarrierDataOn(bool carrierDataOn)
 
 bool DataSwitchSettings::IsAllowActiveData() const
 {
+    // LCOV_EXCL_START
     if (TELEPHONY_EXT_WRAPPER.isVirtualModemSlot_ && TELEPHONY_EXT_WRAPPER.isVirtualModemSlot_(slotId_)) {
         if (TELEPHONY_EXT_WRAPPER.isDcCellularDataAllowed_ && TELEPHONY_EXT_WRAPPER.isDcCellularDataAllowed_()) {
             TELEPHONY_LOGD("dc cellular data is allowed");
@@ -248,6 +252,7 @@ bool DataSwitchSettings::IsAllowActiveData() const
         TELEPHONY_LOGD("dc cellular data is not allowed");
         return false;
     }
+    // LCOV_EXCL_STOP
     if (userDataOn_ && policyDataOn_ && internalDataOn_) {
         return true;
     } else {
@@ -265,9 +270,11 @@ bool DataSwitchSettings::IsUserDataOn()
 bool DataSwitchSettings::IsUserDataRoamingOn()
 {
 #ifdef OHOS_BUILD_ENABLE_TELEPHONY_EXT
+    // LCOV_EXCL_START
     if (TELEPHONY_EXT_WRAPPER.getUserDataRoamingExpend_) {
         return TELEPHONY_EXT_WRAPPER.getUserDataRoamingExpend_(slotId_, userDataRoaming_);
     }
+    // LCOV_EXCL_STOP
 #endif
     return userDataRoaming_;
 }

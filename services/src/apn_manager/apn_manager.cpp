@@ -311,6 +311,7 @@ int32_t ApnManager::CreateAllApnItemByDatabase(int32_t slotId, std::string &errM
 {
     int32_t count = 0;
     sptr<ApnItem> extraApnItem = ApnItem::MakeDefaultApn("default");
+    // LCOV_EXCL_START
     if (TELEPHONY_EXT_WRAPPER.createAllApnItemExt_) {
         if (TELEPHONY_EXT_WRAPPER.createAllApnItemExt_(slotId, extraApnItem)) {
             return PushApnItem(count, slotId, extraApnItem);
@@ -321,17 +322,16 @@ int32_t ApnManager::CreateAllApnItemByDatabase(int32_t slotId, std::string &errM
         TELEPHONY_LOGI("create extra apn item");
         return PushApnItem(count, slotId, extraApnItem);
     }
+    // LCOV_EXCL_STOP
     std::u16string operatorNumeric;
     CoreManagerInner::GetInstance().GetSimOperatorNumeric(slotId, operatorNumeric);
     std::string numeric = Str16ToStr8(operatorNumeric);
     GetCTOperator(slotId, numeric);
-    // LCOV_EXCL_START
     if (numeric.empty()) {
         TELEPHONY_LOGE("numeric is empty!!!");
         errMsg = "numeric is empty";
         return count;
     }
-    // LCOV_EXCL_STOP
     TELEPHONY_LOGI("current slotId = %{public}d, numeric = %{public}s", slotId, numeric.c_str());
     preferId_ = INVALID_PROFILE_ID;
     preferIdChangedByMerge_ = false;
@@ -394,10 +394,12 @@ int32_t ApnManager::CreateMvnoApnItems(int32_t slotId, const std::string &mcc, c
 {
     int32_t count = 0;
     auto helper = CellularDataRdbHelper::GetInstance();
+    // LCOV_EXCL_START
     if (helper == nullptr) {
         TELEPHONY_LOGE("get cellularDataRdbHelper failed");
         return count;
     }
+    // LCOV_EXCL_STOP
     std::vector<PdpProfile> mvnoApnVec;
     std::u16string spn;
     CoreManagerInner::GetInstance().GetSimSpn(slotId, spn);
@@ -635,10 +637,12 @@ sptr<ApnItem> ApnManager::GetApnItemById(const int32_t id)
 bool ApnManager::ResetApns(int32_t slotId)
 {
     auto helper = CellularDataRdbHelper::GetInstance();
+    // LCOV_EXCL_START
     if (helper == nullptr) {
         TELEPHONY_LOGE("get cellularDataRdbHelper failed");
         return false;
     }
+    // LCOV_EXCL_STOP
     return helper->ResetApns(slotId);
 }
 

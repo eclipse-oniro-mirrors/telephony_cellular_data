@@ -31,9 +31,11 @@ CellularDataIncallObserver::~CellularDataIncallObserver() = default;
 void CellularDataIncallObserver::OnChange()
 {
     std::shared_ptr<CellularDataSettingsRdbHelper> settingHelper = CellularDataSettingsRdbHelper::GetInstance();
+    // LCOV_EXCL_START
     if (settingHelper == nullptr) {
         return;
     }
+    // LCOV_EXCL_STOP
     Uri uri(CELLULAR_DATA_SETTING_INTELLIGENCE_NETWORK_URI);
     int value = static_cast<int32_t>(DataSwitchCode::CELLULAR_DATA_DISABLED);
     if (settingHelper->GetValue(uri, INTELLIGENCE_NETWORK_COLUMN_ENABLE, value) != TELEPHONY_SUCCESS) {

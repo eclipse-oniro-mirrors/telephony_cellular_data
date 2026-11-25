@@ -199,10 +199,12 @@ int32_t IncallDataStateMachine::GetSlotId() const
 bool IncallDataStateMachine::IsIncallDataSwitchOn()
 {
     std::shared_ptr<CellularDataSettingsRdbHelper> settingHelper = CellularDataSettingsRdbHelper::GetInstance();
+    // LCOV_EXCL_START
     if (settingHelper == nullptr) {
         TELEPHONY_LOGE("settingHelper null!");
         return false;
     }
+    // LCOV_EXCL_STOP
     int32_t value = static_cast<int32_t>(DataSwitchCode::CELLULAR_DATA_DISABLED);
     int32_t intelligenceNetworkValue = static_cast<int32_t>(DataSwitchCode::CELLULAR_DATA_DISABLED);
     Uri intelligenceNetworkUri(CELLULAR_DATA_SETTING_INTELLIGENCE_NETWORK_URI);

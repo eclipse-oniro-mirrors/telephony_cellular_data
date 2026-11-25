@@ -35,6 +35,14 @@ using namespace testing::ext;
 
 static const int32_t SLEEP_TIME = 3;
 
+/*
+ * connectId_ 竞态说明：每个用例经 fixture 成员 cellularMachine 重建状态机并 Init()，
+ * Init() 末尾 StateMachine::Start() 异步投递 MSG_STATE_MACHINE_INIT，FFRT 线程延迟处理时
+ * TransitionTo(inactiveState_) → Inactive::StateBegin 的 connectId_.fetch_add(1) 会在
+ * 用例已执行 connectId_ = 1 之后并发把它改成 2，击穿 RilActivatePdpContextDone 的
+ * "connectId != flag 早退"弧（b8 DT 轮 RilActivatePdpContextDone_002 失败根因）。
+ * 故所有 connectId_ 赋值前统一 DrainTelEventHandler 排空机器事件队列，消除窗口。
+ */
 class CellularStateMachineTest : public testing::Test {
 public:
     static void SetUpTestCase();
@@ -175,6 +183,7 @@ HWTEST_F(CellularStateMachineTest, Activating_ProcessConnectTimeout_001, Functio
         cellularMachine->Init();
     }
     auto activating = std::static_pointer_cast<Activating>(cellularMachine->activatingState_);
+    TestAsyncUtils::DrainTelEventHandler(cellularMachine->stateMachineEventHandler_.get());
     cellularMachine->connectId_ = 1;
     activating->stateMachine_ = cellularMachine;
     auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_SM_CONNECT, 1);
@@ -217,6 +226,7 @@ HWTEST_F(CellularStateMachineTest, Activating_ProcessConnectTimeout_003, Functio
         cellularMachine->Init();
     }
     auto activating = std::static_pointer_cast<Activating>(cellularMachine->activatingState_);
+    TestAsyncUtils::DrainTelEventHandler(cellularMachine->stateMachineEventHandler_.get());
     cellularMachine->connectId_ = 1;
     cellularMachine->TransitionTo(cellularMachine->disconnectingState_);
     activating->stateMachine_ = cellularMachine;
@@ -280,11 +290,15 @@ HWTEST_F(CellularStateMachineTest, Disconnecting_ProcessConnectTimeout_001, Func
         cellularMachine->Init();
     }
     auto disconnecting = std::static_pointer_cast<Disconnecting>(cellularMachine->disconnectingState_);
+    TestAsyncUtils::DrainTelEventHandler(cellularMachine->stateMachineEventHandler_.get());
     cellularMachine->connectId_ = 1;
     disconnecting->stateMachine_ = cellularMachine;
     auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_SM_DISCONNECT);
+    auto destBefore = cellularMachine->stateMachineEventHandler_->destState_;
     disconnecting->ProcessDisconnectTimeout(event);
-    EXPECT_EQ(cellularMachine->IsInactiveState(), false);
+    // GetParam(0) != connectId(1) → "过期超时"早退不转移。改断同步语义 destState_ 调用前后不变
+    // （原 IsInactiveState() 断言在异步 init 落地时恒真，天然竞态，b9 轮实证翻车）
+    EXPECT_EQ(cellularMachine->stateMachineEventHandler_->destState_, destBefore);
 }
 
 /**
@@ -300,11 +314,14 @@ HWTEST_F(CellularStateMachineTest, Disconnecting_ProcessConnectTimeout_002, Func
         cellularMachine->Init();
     }
     auto disconnecting = std::static_pointer_cast<Disconnecting>(cellularMachine->disconnectingState_);
+    TestAsyncUtils::DrainTelEventHandler(cellularMachine->stateMachineEventHandler_.get());
     cellularMachine->connectId_ = 1;
     disconnecting->stateMachine_ = cellularMachine;
     auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_SM_DISCONNECT);
+    auto destBefore = cellularMachine->stateMachineEventHandler_->destState_;
     disconnecting->ProcessDisconnectTimeout(event);
-    EXPECT_EQ(cellularMachine->IsInactiveState(), false);
+    // 同 _001：早退不转移，断言 destState_ 不变（同步语义，时序无关）
+    EXPECT_EQ(cellularMachine->stateMachineEventHandler_->destState_, destBefore);
 }
 
 /**
@@ -323,7 +340,9 @@ HWTEST_F(CellularStateMachineTest, Disconnecting_ProcessRilAdapterHostDied_001, 
     disconnecting->stateMachine_ = cellularMachine;
     auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_SM_DISCONNECT);
     disconnecting->ProcessRilAdapterHostDied(event);
-    EXPECT_EQ(cellularMachine->IsInactiveState(), false);
+    // 尾路径必 TransitionTo(inactive)：断同步语义 destState_（原 IsInactiveState() 断言依赖
+    // 异步转移尚未落地，init 落地即恒真，天然竞态）
+    EXPECT_EQ(cellularMachine->stateMachineEventHandler_->destState_, cellularMachine->inActiveState_);
 }
 
 /**
@@ -404,13 +423,16 @@ HWTEST_F(CellularStateMachineTest, Disconnecting_ProcessRilDeactivateDataCall_00
     }
     auto disconnecting = std::static_pointer_cast<Disconnecting>(cellularMachine->disconnectingState_);
     disconnecting->stateMachine_ = cellularMachine;
+    TestAsyncUtils::DrainTelEventHandler(cellularMachine->stateMachineEventHandler_.get());
     cellularMachine->connectId_ = 1;
     std::shared_ptr<RadioResponseInfo> radioResponseInfo = std::make_shared<RadioResponseInfo>();
     radioResponseInfo->flag = 1;
     radioResponseInfo->error = ErrType::ERR_GENERIC_FAILURE;
     auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_SM_DISCONNECT, radioResponseInfo);
     disconnecting->ProcessRilDeactivateDataCall(event);
-    EXPECT_FALSE(cellularMachine->IsInactiveState());
+    // connectId==flag 尾路径必 TransitionTo(inactive)：断同步语义 destState_（原 IsInactiveState()
+    // 断言依赖异步转移尚未落地，天然竞态，b9 轮实证翻车）
+    EXPECT_EQ(cellularMachine->stateMachineEventHandler_->destState_, cellularMachine->inActiveState_);
 }
 
 /**
@@ -564,6 +586,7 @@ HWTEST_F(CellularStateMachineTest, Activating_RilActivatePdpContextDone_002, Fun
         cellularMachine->Init();
     }
     auto activating = std::static_pointer_cast<Activating>(cellularMachine->activatingState_);
+    TestAsyncUtils::DrainTelEventHandler(cellularMachine->stateMachineEventHandler_.get());
     cellularMachine->connectId_ = 1;
     activating->stateMachine_ = cellularMachine;
     std::shared_ptr<SetupDataCallResultInfo> setupDataCallResultInfo = std::make_shared<SetupDataCallResultInfo>();
@@ -587,6 +610,7 @@ HWTEST_F(CellularStateMachineTest, Activating_RilActivatePdpContextDone_003, Fun
         cellularMachine->Init();
     }
     auto activating = std::static_pointer_cast<Activating>(cellularMachine->activatingState_);
+    TestAsyncUtils::DrainTelEventHandler(cellularMachine->stateMachineEventHandler_.get());
     cellularMachine->connectId_ = 1;
     activating->stateMachine_ = cellularMachine;
     std::shared_ptr<SetupDataCallResultInfo> setupDataCallResultInfo = std::make_shared<SetupDataCallResultInfo>();
@@ -610,6 +634,7 @@ HWTEST_F(CellularStateMachineTest, Activating_RilActivatePdpContextDone_004, Fun
         cellularMachine->Init();
     }
     auto activating = std::static_pointer_cast<Activating>(cellularMachine->activatingState_);
+    TestAsyncUtils::DrainTelEventHandler(cellularMachine->stateMachineEventHandler_.get());
     cellularMachine->connectId_ = 1;
     activating->stateMachine_ = cellularMachine;
     std::shared_ptr<SetupDataCallResultInfo> setupDataCallResultInfo = std::make_shared<SetupDataCallResultInfo>();
@@ -633,6 +658,7 @@ HWTEST_F(CellularStateMachineTest, Activating_RilActivatePdpContextDone_005, Fun
         cellularMachine->Init();
     }
     auto activating = std::static_pointer_cast<Activating>(cellularMachine->activatingState_);
+    TestAsyncUtils::DrainTelEventHandler(cellularMachine->stateMachineEventHandler_.get());
     cellularMachine->connectId_ = 1;
     activating->stateMachine_ = cellularMachine;
     std::shared_ptr<SetupDataCallResultInfo> setupDataCallResultInfo = std::make_shared<SetupDataCallResultInfo>();
@@ -658,6 +684,7 @@ HWTEST_F(CellularStateMachineTest, Activating_RilErrorResponse_001, Function | M
         cellularMachine->Init();
     }
     auto activating = std::static_pointer_cast<Activating>(cellularMachine->activatingState_);
+    TestAsyncUtils::DrainTelEventHandler(cellularMachine->stateMachineEventHandler_.get());
     cellularMachine->connectId_ = 1;
     activating->stateMachine_ = cellularMachine;
     std::shared_ptr<RadioResponseInfo> radioResponseInfo = std::make_shared<RadioResponseInfo>();
@@ -680,6 +707,7 @@ HWTEST_F(CellularStateMachineTest, Activating_RilErrorResponse_002, Function | M
         cellularMachine->Init();
     }
     auto activating = std::static_pointer_cast<Activating>(cellularMachine->activatingState_);
+    TestAsyncUtils::DrainTelEventHandler(cellularMachine->stateMachineEventHandler_.get());
     cellularMachine->connectId_ = 1;
     activating->stateMachine_ = cellularMachine;
     std::shared_ptr<RadioResponseInfo> radioResponseInfo = std::make_shared<RadioResponseInfo>();
@@ -703,6 +731,7 @@ HWTEST_F(CellularStateMachineTest, Activating_RilErrorResponse_003, Function | M
         cellularMachine->Init();
     }
     auto activating = std::static_pointer_cast<Activating>(cellularMachine->activatingState_);
+    TestAsyncUtils::DrainTelEventHandler(cellularMachine->stateMachineEventHandler_.get());
     cellularMachine->connectId_ = 1;
     activating->stateMachine_ = cellularMachine;
     std::shared_ptr<RadioResponseInfo> radioResponseInfo = std::make_shared<RadioResponseInfo>();
@@ -726,6 +755,7 @@ HWTEST_F(CellularStateMachineTest, Activating_RilErrorResponse_004, Function | M
         cellularMachine->Init();
     }
     auto activating = std::static_pointer_cast<Activating>(cellularMachine->activatingState_);
+    TestAsyncUtils::DrainTelEventHandler(cellularMachine->stateMachineEventHandler_.get());
     cellularMachine->connectId_ = 1;
     activating->stateMachine_ = cellularMachine;
     std::shared_ptr<RadioResponseInfo> radioResponseInfo = std::make_shared<RadioResponseInfo>();
@@ -804,6 +834,7 @@ HWTEST_F(CellularStateMachineTest, Activating_RilErrorResponse_006, Function | M
         cellularMachine->Init();
     }
     auto activating = std::static_pointer_cast<Activating>(cellularMachine->activatingState_);
+    TestAsyncUtils::DrainTelEventHandler(cellularMachine->stateMachineEventHandler_.get());
     cellularMachine->connectId_ = 1;
     activating->stateMachine_ = cellularMachine;
     activating->rilSetChdataErrCnt_ = 4;
@@ -829,6 +860,7 @@ HWTEST_F(CellularStateMachineTest, Activating_RilErrorResponse_007, Function | M
         cellularMachine->Init();
     }
     auto activating = std::static_pointer_cast<Activating>(cellularMachine->activatingState_);
+    TestAsyncUtils::DrainTelEventHandler(cellularMachine->stateMachineEventHandler_.get());
     cellularMachine->connectId_ = 1;
     activating->stateMachine_ = cellularMachine;
     activating->rilSetChdataErrCnt_ = 3;
@@ -854,6 +886,7 @@ HWTEST_F(CellularStateMachineTest, Activating_RilErrorResponse_008, Function | M
         cellularMachine->Init();
     }
     auto activating = std::static_pointer_cast<Activating>(cellularMachine->activatingState_);
+    TestAsyncUtils::DrainTelEventHandler(cellularMachine->stateMachineEventHandler_.get());
     cellularMachine->connectId_ = 1;
     activating->stateMachine_ = cellularMachine;
     activating->rilSetChdataErrCnt_ = 3;

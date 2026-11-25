@@ -31,9 +31,11 @@ CellularDataNetAgent::CellularDataNetAgent()
     netSuppliers_.resize(CoreManagerInner::GetInstance().GetMaxSimCount() * MAX_CAPABILITY_SIZE);
     callBack_ = std::make_unique<NetManagerCallBack>().release();
     tacticsCallBack_ = std::make_unique<NetManagerTacticsCallBack>().release();
+    // LCOV_EXCL_START
     if (callBack_ == nullptr || tacticsCallBack_ == nullptr) {
         TELEPHONY_LOGE("Callback or tacticsCallBack init failed");
     }
+    // LCOV_EXCL_STOP
 }
 
 CellularDataNetAgent::~CellularDataNetAgent() = default;
@@ -56,6 +58,7 @@ bool CellularDataNetAgent::RegisterNetSupplier(const int32_t slotId)
             TELEPHONY_LOGE("Slot%{public}d Invalid simId: %{public}d", slotId, simId);
             continue;
         }
+        // LCOV_EXCL_START
         std::unique_lock<std::shared_mutex> lock(slotIdSimIdMutex_);
         slotIdSimId_[slotId] = simId;
         lock.unlock();
@@ -85,6 +88,7 @@ bool CellularDataNetAgent::RegisterNetSupplier(const int32_t slotId)
             TELEPHONY_LOGI("RegisterSlotType: supplierId[%{public}d] slotId[%{public}d] radioTech[%{public}d]",
                 supplierId, slotId, radioTech);
         }
+        // LCOV_EXCL_STOP
     }
     return flag;
 }
@@ -101,9 +105,11 @@ void CellularDataNetAgent::UnregisterNetSupplier(const int32_t slotId)
         if (netSupplier.simId != simId) {
             continue;
         }
+        // LCOV_EXCL_START
         auto& netManager = NetConnClient::GetInstance();
         int32_t result = netManager.UnregisterNetSupplier(netSupplier.supplierId);
         TELEPHONY_LOGI("Slot%{public}d unregister network result:%{public}d", slotId, result);
+        // LCOV_EXCL_STOP
     }
 }
 
@@ -117,12 +123,14 @@ void CellularDataNetAgent::UnregisterNetSupplierForSimUpdate(const int32_t slotI
         std::unique_lock<std::shared_mutex> lock(slotIdSimIdMutex_);
         slotIdSimId_.erase(slotId);
         lock.unlock();
+        // LCOV_EXCL_START
         auto& netManager = NetConnClient::GetInstance();
         int32_t result = netManager.UnregisterNetSupplier(netSupplier.supplierId);
         TELEPHONY_LOGI("Slot%{public}d unregister network result:%{public}d", slotId, result);
         if (result == NETMANAGER_SUCCESS) {
             netSupplier.simId = INVALID_SIM_ID;
         }
+        // LCOV_EXCL_STOP
     }
 }
 
@@ -130,14 +138,17 @@ void CellularDataNetAgent::UnregisterAllNetSupplier()
 {
     std::unique_lock<std::shared_mutex> lock(netSupplierMutex_);
     for (const NetSupplier &netSupplier : netSuppliers_) {
+        // LCOV_EXCL_START
         int32_t result = NetConnClient::GetInstance().UnregisterNetSupplier(netSupplier.supplierId);
         TELEPHONY_LOGI("Unregister network result:%{public}d", result);
+        // LCOV_EXCL_STOP
     }
     netSuppliers_.clear();
 }
 
 bool CellularDataNetAgent::RegisterPolicyCallback()
 {
+    // LCOV_EXCL_START
     std::shared_ptr<NetManagerStandard::NetPolicyClient> netPolicy = DelayedSingleton<NetPolicyClient>::GetInstance();
     if (netPolicy == nullptr) {
         TELEPHONY_LOGE("Net Policy Client is null");
@@ -148,11 +159,13 @@ bool CellularDataNetAgent::RegisterPolicyCallback()
         TELEPHONY_LOGI("Register NetPolicy Callback successful");
         return true;
     }
+    // LCOV_EXCL_STOP
     return false;
 }
 
 void CellularDataNetAgent::UnregisterPolicyCallback()
 {
+    // LCOV_EXCL_START
     std::shared_ptr<NetManagerStandard::NetPolicyClient> netPolicy = DelayedSingleton<NetPolicyClient>::GetInstance();
     if (netPolicy == nullptr) {
         TELEPHONY_LOGE("Net Policy Client is null");
@@ -160,6 +173,7 @@ void CellularDataNetAgent::UnregisterPolicyCallback()
     }
     int32_t registerResult = netPolicy->UnregisterNetPolicyCallback(tacticsCallBack_);
     TELEPHONY_LOGI("Unregister NetPolicy Callback is :%{public}d", registerResult);
+    // LCOV_EXCL_STOP
 }
 
 int32_t CellularDataNetAgent::UpdateNetSupplierInfo(

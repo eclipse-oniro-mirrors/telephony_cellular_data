@@ -16,6 +16,9 @@
 #define private public
 #define protected public
 
+#include <map>
+#include <string>
+
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 
@@ -26,6 +29,8 @@
 #include "datashare_predicates.h"
 #include "datashare_values_bucket.h"
 #include "incall_data_state_machine.h"
+#include "mock/mock_data_share_helper.h"
+#include "mock/mock_data_share_result_set.h"
 #include "mock/mock_network_search.h"
 #include "mock/mock_sim_manager.h"
 #include "network_search_types.h"
@@ -33,6 +38,7 @@
 #include "radio_event.h"
 #include "sim_state_type.h"
 #include "telephony_types.h"
+#include "utils/scoped_setter.h"
 #include "utils/test_async_utils.h"
 #include "uri.h"
 
@@ -65,6 +71,7 @@ public:
     void SetUp()
     {
         InitMockManager();
+        SetUpMockSettingsHelper();
         CreateIncallDataStateMachine();
         // Init() 末尾 StateMachine::Start() 异步投递 MSG_STATE_MACHINE_INIT，FFRT 线程延迟
         // 处理时会在用例中途执行 InitCmdEnter/StateBegin（额外消费 SimManager mock 的
@@ -86,7 +93,59 @@ public:
             TestAsyncUtils::DrainTelEventHandler(handler_.get());
             handler_ = nullptr;
         }
+        // 状态机/Handler 析构完成后还原单例的 settingsHelper_ 原值再销毁 mock，
+        // 避免后续用例读到悬垂指针（mock 注入守卫，RAII 还原，不跨用例泄漏）
+        settingsHelperGuard_.reset();
+        mockResultSet_.reset();
+        resultSet_.reset();
+        mockDataShareHelper_.reset();
     }
+
+    /*
+     * Mock DataShareHelper 注入：真机上测试进程（hdcd token）无 ohos.permission.
+     * MANAGE_SETTINGS，DataShare 服务侧 Update/Insert 恒被拒（hilog ExecuteEx
+     * Permission denied），WriteBackupSimList/SetIncallDataSwitchOn 真库路径全部
+     * 失败导致 14 个用例 GTEST_SKIP。改为向 CellularDataSettingsRdbHelper 单例
+     * 的 settingsHelper_ 缓存成员塞 MockDataShareHelper + 内存假库（URI→值），
+     * 读写全部走 mock，不触真库。
+     */
+    void SetUpMockSettingsHelper()
+    {
+        mockResultSet_ = std::make_shared<DataShareResultSetMock>();
+        resultSet_ = mockResultSet_;
+        mockDataShareHelper_ = std::make_shared<MockDataShareHelper>();
+        ON_CALL(*mockDataShareHelper_, Release()).WillByDefault(Return(true));
+        ON_CALL(*mockDataShareHelper_, Insert(_, _)).WillByDefault(Return(0));
+        ON_CALL(*mockDataShareHelper_, Update(_, _, _)).WillByDefault(Return(0));
+        ON_CALL(*mockDataShareHelper_, RegisterObserver(_, _)).WillByDefault(Return(0));
+        ON_CALL(*mockDataShareHelper_, UnregisterObserver(_, _)).WillByDefault(Return(0));
+        ON_CALL(*mockDataShareHelper_, NotifyChange(_)).WillByDefault(Return());
+        ON_CALL(*mockDataShareHelper_, Query(_, _, _, _))
+            .WillByDefault(Invoke([this](Uri &uri, const DataShare::DataSharePredicates &,
+                std::vector<std::string> &, DataShare::DatashareBusinessError *) {
+                lastQueryUri_ = uri.ToString();
+                return resultSet_;
+            }));
+        ON_CALL(*mockResultSet_, GoToFirstRow()).WillByDefault(Return(0));
+        ON_CALL(*mockResultSet_, Close()).WillByDefault(Return(0));
+        ON_CALL(*mockResultSet_, GetColumnIndex(_, _))
+            .WillByDefault(DoAll(SetArgReferee<1>(0), Return(0)));
+        ON_CALL(*mockResultSet_, GetString(_, _))
+            .WillByDefault(Invoke([this](int, std::string &value) {
+                auto it = fakeSettingsDb_.find(lastQueryUri_);
+                value = (it != fakeSettingsDb_.end()) ? it->second : "";
+                return DataShare::E_OK;
+            }));
+        settingsHelperGuard_ = std::make_unique<ScopedSetter<std::shared_ptr<DataShare::DataShareHelper>>>(
+            CellularDataSettingsRdbHelper::GetInstance()->settingsHelper_, mockDataShareHelper_);
+    }
+
+    // 假库 key 与 Query 侧统一走 Uri::ToString()，规避 URI 字符串归一化差异
+    static std::string SettingsKey(const std::string &uri)
+    {
+        return Uri(uri).ToString();
+    }
+
 
     void InitMockManager()
     {
@@ -116,66 +175,24 @@ public:
         stateMachine_->Init(static_cast<int32_t>(TelCallStatus::CALL_STATUS_DIALING), slotId, handler_, apnManager);
     }
 
+    // 内存假库写入（不再触真库；真机 DataShare 权限拒绝史见 SetUpMockSettingsHelper 注释）
     bool WriteBackupSimList(const std::string &value)
     {
-        auto settingHelper = CellularDataSettingsRdbHelper::GetInstance();
-        if (settingHelper == nullptr) {
-            return false;
-        }
-        std::shared_ptr<DataShare::DataShareHelper> helper = settingHelper->CreateDataShareHelper();
-        if (helper == nullptr) {
-            return false;
-        }
-        Uri backupSimListUri(CELLULAR_DATA_SETTING_BACKUP_SIM_LIST_URI);
-        DataShare::DataSharePredicates predicates;
-        predicates.EqualTo(CELLULAR_DATA_COLUMN_KEYWORD, BACKUP_SIM_LIST_COLUMN_ENABLE);
-        DataShare::DataShareValuesBucket bucket;
-        bucket.Put(CELLULAR_DATA_COLUMN_KEYWORD,
-            DataShare::DataShareValueObject(std::string(BACKUP_SIM_LIST_COLUMN_ENABLE)));
-        bucket.Put(CELLULAR_DATA_COLUMN_VALUE, DataShare::DataShareValueObject(value));
-        int32_t result = helper->Update(backupSimListUri, predicates, bucket);
-        if (result <= 0) {
-            result = helper->Insert(backupSimListUri, bucket);
-        }
-        helper->NotifyChange(backupSimListUri);
-        helper->Release();
-        return result > 0;
+        fakeSettingsDb_[SettingsKey(CELLULAR_DATA_SETTING_BACKUP_SIM_LIST_URI)] = value;
+        return true;
     }
 
     bool SetIncallDataSwitchOn()
     {
-        auto settingHelper = CellularDataSettingsRdbHelper::GetInstance();
-        if (settingHelper == nullptr) {
-            return false;
-        }
-        Uri intelligenceNetworkUri(CELLULAR_DATA_SETTING_INTELLIGENCE_NETWORK_URI);
-        Uri smartDualCardUri(CELLULAR_DATA_SETTING_INTELLIGENCE_SWITCH_URI);
-        if (settingHelper->PutValue(intelligenceNetworkUri, INTELLIGENCE_NETWORK_COLUMN_ENABLE, 1) !=
-            TELEPHONY_ERR_SUCCESS) {
-            return false;
-        }
-        if (settingHelper->PutValue(smartDualCardUri, INTELLIGENCE_SWITCH_COLUMN_ENABLE, 1) != TELEPHONY_ERR_SUCCESS) {
-            return false;
-        }
+        fakeSettingsDb_[SettingsKey(CELLULAR_DATA_SETTING_INTELLIGENCE_NETWORK_URI)] = "1";
+        fakeSettingsDb_[SettingsKey(CELLULAR_DATA_SETTING_INTELLIGENCE_SWITCH_URI)] = "1";
         return true;
     }
 
     bool SetIncallDataSwitchOff()
     {
-        auto settingHelper = CellularDataSettingsRdbHelper::GetInstance();
-        if (settingHelper == nullptr) {
-            return false;
-        }
-        Uri intelligenceNetworkUri(CELLULAR_DATA_SETTING_INTELLIGENCE_NETWORK_URI);
-        Uri smartDualCardUri(CELLULAR_DATA_SETTING_INTELLIGENCE_SWITCH_URI);
-        if (settingHelper->PutValue(intelligenceNetworkUri, INTELLIGENCE_NETWORK_COLUMN_ENABLE, 0) !=
-            TELEPHONY_ERR_SUCCESS) {
-            return false;
-        }
-        if (settingHelper->PutValue(smartDualCardUri, INTELLIGENCE_SWITCH_COLUMN_ENABLE, 0) !=
-            TELEPHONY_ERR_SUCCESS) {
-            return false;
-        }
+        fakeSettingsDb_[SettingsKey(CELLULAR_DATA_SETTING_INTELLIGENCE_NETWORK_URI)] = "0";
+        fakeSettingsDb_[SettingsKey(CELLULAR_DATA_SETTING_INTELLIGENCE_SWITCH_URI)] = "0";
         return true;
     }
 
@@ -183,6 +200,13 @@ public:
     std::shared_ptr<IncallDataTestHandler> handler_ = nullptr;
     MockSimManager *mockSimManager = nullptr;
     MockNetworkSearchManager *mockNetworkSearchManager = nullptr;
+    // settings DataShare mock 注入（见 SetUpMockSettingsHelper 注释）
+    std::shared_ptr<MockDataShareHelper> mockDataShareHelper_ = nullptr;
+    std::shared_ptr<DataShareResultSetMock> mockResultSet_ = nullptr;
+    std::shared_ptr<DataShare::DataShareResultSet> resultSet_ = nullptr;
+    std::unique_ptr<ScopedSetter<std::shared_ptr<DataShare::DataShareHelper>>> settingsHelperGuard_ = nullptr;
+    std::map<std::string, std::string> fakeSettingsDb_;
+    std::string lastQueryUri_;
 };
 
 /**
@@ -281,11 +305,10 @@ HWTEST_F(IncallDataStateMachineBranchTest, IncallDataStateMachine_CheckBackupNet
     if (!WriteBackupSimList(BACKUP_SIM_LIST_VALUE_INVALID)) {
         GTEST_SKIP() << "datashare unavailable, skip invalid backup list case";
     }
-    SimLabel simLabel;
-    simLabel.simType = SimType::PSIM;
-    simLabel.index = 2;
-    EXPECT_CALL(*mockSimManager, GetSimLabel(_, _))
-        .WillOnce(DoAll(SetArgReferee<1>(simLabel), Return(0)));
+    // 非法列表（"-1,x,0;abc;1,2"）各段全部被 ParseSingleBackupCardInfo 丢弃 →
+    // cardInfos 数量 < VALID_MIN_BACKUP_NUM → 在 CheckIfBackupNetwork 之前提前返回 true，
+    // 不会触达 GetSimLabel（原用例带 GetSimLabel WillOnce 预期，真库写失败被 skip 时
+    // 从未暴露该错误预期，mock 化后按实际路径修正）
     ASSERT_TRUE(stateMachine_->CheckBackupNetworkIfAllow(0));
 }
 
@@ -795,6 +818,135 @@ HWTEST_F(IncallDataStateMachineBranchTest, ActivatingSecondaryState_StateProcess
 
     auto unknownEvent = AppExecFwk::InnerEvent::Get(0);
     ASSERT_FALSE(activatingSecondaryState->StateProcess(unknownEvent));
+}
+
+/**
+ * @tc.number: IncallDataState_StandaloneStates_NullGuards_001
+ * @tc.name: Test standalone-constructed incall states with empty weak_ptr
+ * @tc.desc: 独立构造各 State 子类（空 weak_ptr）→ StateProcess/各 Process 方法/StateBegin
+ *           的空机守卫全部早退（NOT_PROCESSED/直接返回），不依赖状态机事件循环。
+ */
+HWTEST_F(IncallDataStateMachineBranchTest, IncallDataState_StandaloneStates_NullGuards_001,
+    Function | MediumTest | Level3)
+{
+    auto event = AppExecFwk::InnerEvent::Get(0);
+    AppExecFwk::InnerEvent::Pointer nullEvent(nullptr, nullptr);
+    // IdleState：StateProcess 空事件/空机两守卫 + 各 Process 方法自身守卫
+    IdleState idleState(std::weak_ptr<IncallDataStateMachine>(), "IdleState");
+    EXPECT_FALSE(idleState.StateProcess(nullEvent));
+    EXPECT_FALSE(idleState.StateProcess(event));
+    EXPECT_FALSE(idleState.ProcessCallStarted(event));
+    EXPECT_FALSE(idleState.ProcessCallEnded(event));
+    EXPECT_FALSE(idleState.ProcessSettingsOn(event));
+    EXPECT_FALSE(idleState.ProcessDsdsChanged(event));
+    idleState.StateBegin();
+    idleState.StateEnd();
+
+    // SecondaryActiveState：StateProcess 空事件/空机 + 各 Process 方法守卫
+    SecondaryActiveState secondaryState(std::weak_ptr<IncallDataStateMachine>(), "SecondaryActiveState");
+    EXPECT_FALSE(secondaryState.StateProcess(nullEvent));
+    EXPECT_FALSE(secondaryState.StateProcess(event));
+    EXPECT_FALSE(secondaryState.ProcessCallEnded(event));
+    EXPECT_FALSE(secondaryState.ProcessSettingsOff(event));
+    EXPECT_FALSE(secondaryState.ProcessDsdsChanged(event));
+    EXPECT_FALSE(secondaryState.ProcessCallStateCheck(event));
+    secondaryState.ProcessSettingsOn(event);
+    secondaryState.StateBegin();
+    secondaryState.StateEnd();
+
+    // 其余三态：StateProcess 空机守卫 + StateBegin/StateEnd 空机早退
+    ActivatingSecondaryState activatingState(std::weak_ptr<IncallDataStateMachine>(), "ActivatingSecondaryState");
+    EXPECT_FALSE(activatingState.StateProcess(event));
+    activatingState.StateBegin();
+    activatingState.StateEnd();
+
+    ActivatedSecondaryState activatedState(std::weak_ptr<IncallDataStateMachine>(), "ActivatedSecondaryState");
+    EXPECT_FALSE(activatedState.StateProcess(event));
+    activatedState.StateBegin();
+    activatedState.StateEnd();
+
+    DeactivatingSecondaryState deactivatingState(std::weak_ptr<IncallDataStateMachine>(), "DeactivatingSecondaryState");
+    EXPECT_FALSE(deactivatingState.StateProcess(event));
+    deactivatingState.StateBegin();
+    deactivatingState.StateEnd();
+}
+
+/**
+ * @tc.number: SecondaryActiveState_CallStateVariants_001
+ * @tc.name: Test ProcessDsdsChanged / ProcessCallStateCheck / ProcessCallEnded call state matrix
+ * @tc.desc   UpdateCallState 三态（IDLE/DISCONNECTED/ACTIVE）驱动 ProcessDsdsChanged 的 ||
+ *            矩阵与 TransitionTo；ProcessCallStateCheck 矩阵 + 空事件 + DATA_CONNECTED 事件 +
+ *            未知事件；ProcessCallEnded 开关两态（&& 首操作数矩阵）。
+ */
+HWTEST_F(IncallDataStateMachineBranchTest, SecondaryActiveState_CallStateVariants_001,
+    Function | MediumTest | Level3)
+{
+    auto secondaryState = std::static_pointer_cast<SecondaryActiveState>(stateMachine_->secondaryActiveState_);
+    auto event = AppExecFwk::InnerEvent::Get(0);
+    AppExecFwk::InnerEvent::Pointer nullEvent(nullptr, nullptr);
+    // A) ProcessDsdsChanged：IDLE（首操作数真）/ DISCONNECTED（次操作数真）/ ACTIVE（全假）
+    stateMachine_->UpdateCallState(static_cast<int32_t>(TelCallStatus::CALL_STATUS_IDLE));
+    EXPECT_TRUE(secondaryState->ProcessDsdsChanged(event));
+    stateMachine_->UpdateCallState(static_cast<int32_t>(TelCallStatus::CALL_STATUS_DISCONNECTED));
+    EXPECT_TRUE(secondaryState->ProcessDsdsChanged(event));
+    stateMachine_->UpdateCallState(static_cast<int32_t>(TelCallStatus::CALL_STATUS_ACTIVE));
+    EXPECT_TRUE(secondaryState->ProcessDsdsChanged(event));
+    // B) ProcessCallStateCheck：IDLE/DISCONNECTED → 转 deactivating + PROCESSED；
+    //    ACTIVE → 续约延迟自检 + PROCESSED（事件本身不检查，含 eventHandler 非空弧）
+    stateMachine_->UpdateCallState(static_cast<int32_t>(TelCallStatus::CALL_STATUS_IDLE));
+    EXPECT_TRUE(secondaryState->ProcessCallStateCheck(event));
+    stateMachine_->UpdateCallState(static_cast<int32_t>(TelCallStatus::CALL_STATUS_DISCONNECTED));
+    EXPECT_TRUE(secondaryState->ProcessCallStateCheck(event));
+    stateMachine_->UpdateCallState(static_cast<int32_t>(TelCallStatus::CALL_STATUS_ACTIVE));
+    EXPECT_TRUE(secondaryState->ProcessCallStateCheck(event));
+    EXPECT_TRUE(secondaryState->ProcessCallStateCheck(nullEvent));
+    // C) ProcessCallEnded：智能通话开关 关/开 两态（IsIncallDataSwitchOn && 矩阵首操作数）
+    stateMachine_->UpdateCallState(static_cast<int32_t>(TelCallStatus::CALL_STATUS_ACTIVE));
+    SetIncallDataSwitchOff();
+    secondaryState->ProcessCallEnded(event);
+    SetIncallDataSwitchOn();
+    secondaryState->ProcessCallEnded(event);
+}
+
+/**
+ * @tc.number: IncallDataStateMachine_GetValueFailVariants_001
+ * @tc.name: Test settings rdb GetValue failure variants
+ * @tc.desc  Query mock 返回 nullptr → GetValue 非 SUCCESS：CheckBackupNetworkIfAllow
+ *           备份列表未配置早退 true；IsIncallDataSwitchOn 首/第二个 GetValue 失败均 false。
+ */
+HWTEST_F(IncallDataStateMachineBranchTest, IncallDataStateMachine_GetValueFailVariants_001,
+    Function | MediumTest | Level3)
+{
+    // A) Query 恒失败 → CheckBackupNetworkIfAllow 走"未配置"早退 true
+    ON_CALL(*mockDataShareHelper_, Query(_, _, _, _))
+        .WillByDefault(Invoke([this](Uri &uri, const DataShare::DataSharePredicates &,
+            std::vector<std::string> &, DataShare::DatashareBusinessError *) {
+            lastQueryUri_ = uri.ToString();
+            return std::shared_ptr<DataShare::DataShareResultSet>();
+        }));
+    EXPECT_TRUE(stateMachine_->CheckBackupNetworkIfAllow(0));
+    // B) IsIncallDataSwitchOn：首个 GetValue（智能上网）失败 → false
+    EXPECT_FALSE(stateMachine_->IsIncallDataSwitchOn());
+    // C) IsIncallDataSwitchOn：首个成功、第二个（双卡智能开关）失败 → false
+    int32_t queryCalls = 0;
+    ON_CALL(*mockDataShareHelper_, Query(_, _, _, _))
+        .WillByDefault(Invoke([this, &queryCalls](Uri &uri, const DataShare::DataSharePredicates &,
+            std::vector<std::string> &, DataShare::DatashareBusinessError *) {
+            lastQueryUri_ = uri.ToString();
+            ++queryCalls;
+            return (queryCalls == 1) ? resultSet_
+                                     : std::shared_ptr<DataShare::DataShareResultSet>();
+        }));
+    EXPECT_FALSE(stateMachine_->IsIncallDataSwitchOn());
+    // D) 两查询均成功且都为开 → true（复核 mock 还原后正常路径仍可达）
+    ON_CALL(*mockDataShareHelper_, Query(_, _, _, _))
+        .WillByDefault(Invoke([this](Uri &uri, const DataShare::DataSharePredicates &,
+            std::vector<std::string> &, DataShare::DatashareBusinessError *) {
+            lastQueryUri_ = uri.ToString();
+            return resultSet_;
+        }));
+    SetIncallDataSwitchOn();
+    EXPECT_TRUE(stateMachine_->IsIncallDataSwitchOn());
 }
 } // namespace Telephony
 } // namespace OHOS
