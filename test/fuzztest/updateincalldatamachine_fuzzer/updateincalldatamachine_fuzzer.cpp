@@ -30,17 +30,16 @@ using namespace AppExecFwk;
 using namespace OHOS::EventFwk;
 constexpr int32_t SLOT_NUM_MAX = 3;
 constexpr int32_t EVENT_ID_MAX = 255;
-bool g_flag = false;
 
 void IdleStateMachineFuzz(const uint8_t *data, size_t size)
 {
     FuzzedDataProvider fdp(data, size);
-    int32_t slotId = fdp.ConsumeIntegralInRange<uint32_t>(0, SLOT_NUM_MAX);
+    int32_t slotId = fdp.ConsumeIntegralInRange<int32_t>(0, SLOT_NUM_MAX);
     std::shared_ptr<IncallDataStateMachine> machine = std::make_shared<IncallDataStateMachine>();
     if (machine == nullptr) {
         return;
     }
-    std::int32_t intValue = fdp.ConsumeIntegralInRange<uint32_t>(0, EVENT_ID_MAX);
+    std::int32_t intValue = fdp.ConsumeIntegralInRange<int32_t>(0, EVENT_ID_MAX);
     sptr<ApnManager> apnManager = sptr<ApnManager>::MakeSptr();
     if (apnManager == nullptr) {
         return;
@@ -74,12 +73,12 @@ void IdleStateMachineFuzz(const uint8_t *data, size_t size)
 void ActivatingSecondaryStateMachineFuzz(const uint8_t *data, size_t size)
 {
     FuzzedDataProvider fdp(data, size);
-    int32_t slotId = fdp.ConsumeIntegralInRange<uint32_t>(0, SLOT_NUM_MAX);
+    int32_t slotId = fdp.ConsumeIntegralInRange<int32_t>(0, SLOT_NUM_MAX);
     std::shared_ptr<IncallDataStateMachine> machine = std::make_shared<IncallDataStateMachine>();
     if (machine == nullptr) {
         return;
     }
-    std::int32_t intValue = fdp.ConsumeIntegralInRange<uint32_t>(0, EVENT_ID_MAX);
+    std::int32_t intValue = fdp.ConsumeIntegralInRange<int32_t>(0, EVENT_ID_MAX);
     sptr<ApnManager> apnManager = std::make_unique<ApnManager>().release();
     if (apnManager == nullptr) {
         return;
@@ -117,12 +116,12 @@ void ActivatingSecondaryStateMachineFuzz(const uint8_t *data, size_t size)
 void ActivatedSecondaryStateMachineFuzz(const uint8_t *data, size_t size)
 {
     FuzzedDataProvider fdp(data, size);
-    int32_t slotId = fdp.ConsumeIntegralInRange<uint32_t>(0, SLOT_NUM_MAX);
+    int32_t slotId = fdp.ConsumeIntegralInRange<int32_t>(0, SLOT_NUM_MAX);
     std::shared_ptr<IncallDataStateMachine> machine = std::make_shared<IncallDataStateMachine>();
     if (machine == nullptr) {
         return;
     }
-    std::int32_t intValue = fdp.ConsumeIntegralInRange<uint32_t>(0, EVENT_ID_MAX);
+    std::int32_t intValue = fdp.ConsumeIntegralInRange<int32_t>(0, EVENT_ID_MAX);
     sptr<ApnManager> apnManager = std::make_unique<ApnManager>().release();
     if (apnManager == nullptr) {
         return;
@@ -161,12 +160,12 @@ void ActivatedSecondaryStateMachineFuzz(const uint8_t *data, size_t size)
 void DeactivatingSecondaryStateMachineFuzz(const uint8_t *data, size_t size)
 {
     FuzzedDataProvider fdp(data, size);
-    int32_t slotId = fdp.ConsumeIntegralInRange<uint32_t>(0, SLOT_NUM_MAX);
+    int32_t slotId = fdp.ConsumeIntegralInRange<int32_t>(0, SLOT_NUM_MAX);
     std::shared_ptr<IncallDataStateMachine> machine = std::make_shared<IncallDataStateMachine>();
     if (machine == nullptr) {
         return;
     }
-    std::int32_t intValue = fdp.ConsumeIntegralInRange<uint32_t>(0, EVENT_ID_MAX);
+    std::int32_t intValue = fdp.ConsumeIntegralInRange<int32_t>(0, EVENT_ID_MAX);
     sptr<ApnManager> apnManager = std::make_unique<ApnManager>().release();
     if (apnManager == nullptr) {
         return;
@@ -209,13 +208,10 @@ void UpdateIncallDataMachineWithMyAPI(const uint8_t *data, size_t size)
         return;
     }
 
-    if (!g_flag) {
-        IdleStateMachineFuzz(data, size);
-        ActivatingSecondaryStateMachineFuzz(data, size);
-        ActivatedSecondaryStateMachineFuzz(data, size);
-        DeactivatingSecondaryStateMachineFuzz(data, size);
-        g_flag = true;
-    }
+    IdleStateMachineFuzz(data, size);
+    ActivatingSecondaryStateMachineFuzz(data, size);
+    ActivatedSecondaryStateMachineFuzz(data, size);
+    DeactivatingSecondaryStateMachineFuzz(data, size);
 }
 } // namespace OHOS
 
