@@ -3108,7 +3108,7 @@ HWTEST_F(CellularStateMachineTest, CellularDataStateMachine_GetMtuSizeFromOpCfg_
  * @tc.name     test on interface link state changed with mismatch/up/down
  * @tc.desc     Function test
  * @tc.note     ifName_ 空早退/名字不匹配早退/up 且非 Active/up=false 无挂起事件/
- *              up=false 且有挂起 MSG_DISCONNECT_TIMEOUT_CHECK → Remove+重发。
+ *              up=false 且有挂起 MSG_CONNECTION_LOST_TIMEOUT_CHECK → Remove+重发。
  */
 HWTEST_F(CellularStateMachineTest, CellularDataStateMachine_OnInterfaceLinkStateChanged_001,
     Function | MediumTest | Level3)
@@ -3128,12 +3128,12 @@ HWTEST_F(CellularStateMachineTest, CellularDataStateMachine_OnInterfaceLinkState
     // 5) up=false 且挂起连接丢失检查事件：Remove + 按 INTERFACE_DOWN_TIMEOUT 重发
     ASSERT_NE(sm->stateMachineEventHandler_, nullptr);
     sm->stateMachineEventHandler_->SendEvent(
-        CellularDataEventCode::MSG_DISCONNECT_TIMEOUT_CHECK, sm->connectId_.load(), 60000);
+        CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK, sm->connectId_.load(), 60000);
     EXPECT_TRUE(sm->stateMachineEventHandler_->HasInnerEvent(
-        CellularDataEventCode::MSG_DISCONNECT_TIMEOUT_CHECK));
+        CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK));
     EXPECT_EQ(sm->OnInterfaceLinkStateChanged("cellular0", false), 0);
     EXPECT_TRUE(sm->stateMachineEventHandler_->HasInnerEvent(
-        CellularDataEventCode::MSG_DISCONNECT_TIMEOUT_CHECK)); // 重发后仍在
+        CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK)); // 重发后仍在
     TestAsyncUtils::DrainStateMachine(sm.get());
     sm->ifName_ = "";
 }
