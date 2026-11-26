@@ -25,7 +25,10 @@ namespace Telephony {
 
 DataConnectionManager::DataConnectionManager(int32_t slotId) : StateMachine("DataConnectionManager"), slotId_(slotId)
 {
-    connectionMonitor_ = std::make_shared<DataConnectionMonitor>(slotId);
+    // The solicited pdp context list response is delivered to the state machine handler, the
+    // same handler that receives the unsolicited RADIO_DATA_CALL_LIST_CHANGED report, so that
+    // an inactive cid in the query result triggers the retry path in RadioDataCallListChanged.
+    connectionMonitor_ = std::make_shared<DataConnectionMonitor>(slotId, stateMachineEventHandler_);
     if (connectionMonitor_ == nullptr) {
         TELEPHONY_LOGE("Slot%{public}d: connectionMonitor_ is null", slotId_);
         return;
@@ -225,6 +228,8 @@ void CcmDefaultState::RadioDataCallListChanged(const AppExecFwk::InnerEvent::Poi
     }
     std::map<int32_t, std::shared_ptr<CellularDataStateMachine>> idActiveConnectionMap =
         connectManager_.GetActiveConnection();
+    TELEPHONY_LOGI("Slot%{public}d: call list size is %{public}zu, active connection size is %{public}zu",
+        connectManager_.GetSlotId(), infos->dcList.size(), idActiveConnectionMap.size());
     UpdateNetworkInfo(event);
     for (const std::pair<const int32_t, std::shared_ptr<CellularDataStateMachine>>& it : idActiveConnectionMap) {
         if (it.second == nullptr) {

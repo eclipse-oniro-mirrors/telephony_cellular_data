@@ -26,7 +26,8 @@ namespace OHOS {
 namespace Telephony {
 class DataConnectionMonitor : public TelEventHandler {
 public:
-    explicit DataConnectionMonitor(int32_t slotId);
+    explicit DataConnectionMonitor(
+        int32_t slotId, std::shared_ptr<AppExecFwk::EventHandler> pdpContextListObserver = nullptr);
     ~DataConnectionMonitor() = default;
 
     /**
@@ -114,7 +115,6 @@ public:
 private:
     bool IsAggressiveRecovery();
     int32_t GetStallDetectionPeriod();
-    bool IsScreenOn();
     bool IsVsimEnabled();
 
     std::unique_ptr<TrafficManagement> trafficManager_;
@@ -126,6 +126,7 @@ private:
     RecoveryState dataRecoveryState_ = RecoveryState::STATE_REQUEST_CONTEXT_LIST;
     CellDataFlowType dataFlowType_ = CellDataFlowType::DATA_FLOW_TYPE_NONE;
     const int32_t slotId_;
+    std::shared_ptr<AppExecFwk::EventHandler> pdpContextListObserver_ = nullptr;
     int32_t callState_ = static_cast<int32_t>(TelCallStatus::CALL_STATUS_IDLE);
 };
 } // namespace Telephony

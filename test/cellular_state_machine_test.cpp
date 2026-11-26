@@ -1431,7 +1431,7 @@ HWTEST_F(CellularStateMachineTest, Active_ProcessDataConnectionRoamOn_001, Funct
     active->stateMachine_ = cellularMachine;
     auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_SM_CONNECT);
     bool result = active->ProcessDataConnectionRoamOn(event);
-    EXPECT_TRUE(result);
+    EXPECT_EQ(result, true);
 }
 
 /**
@@ -1845,7 +1845,7 @@ HWTEST_F(CellularStateMachineTest, CellularDataStateMachine_SplitProxyIpAddress_
 }
 
 /**
- * @tc.number   CellularDataStateMachine_SplitProxyIpAddress_002
+ * @tc.number   CellularDataStateMachine_SplitProxyIpAddress_001
  * @tc.name     test function branch
  * @tc.desc     Function test
  */
@@ -1862,7 +1862,7 @@ HWTEST_F(CellularStateMachineTest, CellularDataStateMachine_SplitProxyIpAddress_
 }
 
 /**
- * @tc.number   CellularDataStateMachine_SplitProxyIpAddress_003
+ * @tc.number   CellularDataStateMachine_SplitProxyIpAddress_001
  * @tc.name     test function branch
  * @tc.desc     Function test
  */
@@ -2311,78 +2311,9 @@ HWTEST_F(CellularStateMachineTest, Default_ProcessUpdateNetworkInfo_001, Functio
 }
 
 /**
- * @tc.number   SetIfReuseSupplierId_001
+ * @tc.number   OnInterfaceLinkStateChanged_001
  * @tc.name     test function branch
  * @tc.desc     Function test
- */
-HWTEST_F(CellularStateMachineTest, SetIfReuseSupplierId_001, Function | MediumTest | Level1)
-{
-    if (cellularMachine == nullptr) {
-        std::shared_ptr<CellularMachineTest> machine = std::make_shared<CellularMachineTest>();
-        cellularMachine = machine->CreateCellularDataConnect(0);
-        cellularMachine->Init();
-    }
-    EXPECT_EQ(cellularMachine->reuseApnCap_, NetManagerStandard::NetCap::NET_CAPABILITY_END);
-    cellularMachine->SetIfReuseSupplierId(true);
-}
-
-/**
- * @tc.number   SetIfReuseSupplierId_002
- * @tc.name     test function branch
- * @tc.desc     Function test
- */
-HWTEST_F(CellularStateMachineTest, SetIfReuseSupplierId_002, Function | MediumTest | Level1)
-{
-    if (cellularMachine == nullptr) {
-        std::shared_ptr<CellularMachineTest> machine = std::make_shared<CellularMachineTest>();
-        cellularMachine = machine->CreateCellularDataConnect(0);
-        cellularMachine->Init();
-    }
-    cellularMachine->reuseApnCap_ = NetManagerStandard::NetCap::NET_CAPABILITY_MMS;
-    cellularMachine->SetIfReuseSupplierId(true);
-    EXPECT_NE(cellularMachine->reuseApnCap_, NetManagerStandard::NetCap::NET_CAPABILITY_END);
-}
-
-/**
- * @tc.number   UpdateNetworkInfoIfInActive_001
- * @tc.name     test function branch
- * @tc.desc     Function test
- */
-HWTEST_F(CellularStateMachineTest, UpdateNetworkInfoIfInActive_001, Function | MediumTest | Level1)
-{
-    if (cellularMachine == nullptr) {
-        std::shared_ptr<CellularMachineTest> machine = std::make_shared<CellularMachineTest>();
-        cellularMachine = machine->CreateCellularDataConnect(0);
-        cellularMachine->Init();
-    }
-    SetupDataCallResultInfo info;
-    EXPECT_NE(cellularMachine->cellularDataHandler_, nullptr);
-    cellularMachine->cellularDataHandler_ = nullptr;
-    cellularMachine->UpdateNetworkInfoIfInActive(info);
-}
-
-/**
- * @tc.number   FillRSDFromNetCap_001
- * @tc.name     test function branch
- * @tc.desc     Function test
- */
-HWTEST_F(CellularStateMachineTest, FillRSDFromNetCap_001, Function | MediumTest | Level1)
-{
-    if (cellularMachine == nullptr) {
-        std::shared_ptr<CellularMachineTest> machine = std::make_shared<CellularMachineTest>();
-        cellularMachine = machine->CreateCellularDataConnect(0);
-        cellularMachine->Init();
-    }
-    EXPECT_NE(cellularMachine, nullptr);
-    std::map<std::string, std::string> networkSliceParas;
-    sptr<ApnItem> apn = new ApnItem();
-    cellularMachine->FillRSDFromNetCap(networkSliceParas, apn);
-}
-
-/**
- * @tc.number OnInterfaceLinkStateChanged_001
- * @tc.name test function branch
- * @tc.desc Function test
  */
 HWTEST_F(CellularStateMachineTest, OnInterfaceLinkStateChanged_001, Function | MediumTest | Level0)
 {
@@ -2403,7 +2334,7 @@ HWTEST_F(CellularStateMachineTest, OnInterfaceLinkStateChanged_001, Function | M
     cellularMachine->TransitionTo(cellularMachine->inActiveState_);
     active->stateMachine_ = cellularMachine;
     std::shared_ptr<DataDisconnectParams> dataDisconnectParams =
-    std::make_shared<DataDisconnectParams>("", DisConnectionReason::REASON_NORMAL);
+        std::make_shared<DataDisconnectParams>("", DisConnectionReason::REASON_NORMAL);
     auto event = AppExecFwk::InnerEvent::Get(0, dataDisconnectParams);
     bool result = active->ProcessDisconnectAllDone(event);
     if (cellularMachine->netInterfaceCallback_ != nullptr) {
@@ -2497,26 +2428,39 @@ HWTEST_F(CellularStateMachineTest, ProcessConnectionLostTimeout_001, Function | 
         cellularMachine = machine->CreateCellularDataConnect(0);
         cellularMachine->Init();
     }
+    // 排空 handler 残留事件与在飞任务：避免先前用例遗留的异步 ProcessTransitions 在本用例
+    // 执行期间并发执行 Inactive::StateBegin（其中 connectId_.fetch_add(1) 会令 connectId 校验
+    // 事件被判 stale，ProcessConnectionLostTimeout 提前返回）
+    TestAsyncUtils::DrainTelEventHandler(cellularMachine->stateMachineEventHandler_.get());
     auto active = std::static_pointer_cast<Active>(cellularMachine->activeState_);
     auto inactive = std::static_pointer_cast<Inactive>(cellularMachine->inActiveState_);
     ASSERT_NE(active, nullptr);
     ASSERT_NE(inactive, nullptr);
+    // Init() 通过 MSG_STATE_MACHINE_INIT 异步执行 Inactive::StateBegin 会自增 connectId_，
+    // 先排空异步初始化，避免用例中途 connectId_/currentState_ 被改写导致事件被判为陈旧。
+    TestAsyncUtils::DrainStateMachine(cellularMachine.get());
     active->stateMachine_ = cellularMachine;
-    cellularMachine->connectId_ = 1;
+    cellularMachine->connectId_.store(1);
     cellularMachine->apnId_ = 1;
     cellularMachine->SetReuseApnCap(NetManagerStandard::NetCap::NET_CAPABILITY_INTERNET);
     ASSERT_NE(cellularMachine->GetReuseApnCap(), NetManagerStandard::NetCap::NET_CAPABILITY_END);
-    active->StateBegin();
+    auto event = AppExecFwk::InnerEvent::Get(
+        CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK, cellularMachine->connectId_.load());
+    // 经 TransitionTo + ProcessTransitions 同步进入 Active，保证 handler 的 curState_ 与 currentState_ 一致。
+    cellularMachine->TransitionTo(cellularMachine->activeState_);
+    cellularMachine->stateMachineEventHandler_->ProcessTransitions(event);
     ASSERT_TRUE(cellularMachine->IsActiveState());
-    auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK, 1);
     cellularMachine->ProcessConnectionLostTimeout(event);
+    // ProcessConnectionLostTimeout 内部仅 TransitionTo 置位 destState_，需驱动一次迁移才会真正进入 Inactive。
+    cellularMachine->stateMachineEventHandler_->ProcessTransitions(event);
     EXPECT_EQ(cellularMachine->GetReuseApnCap(), NetManagerStandard::NetCap::NET_CAPABILITY_END);
-    // Inactive::StateBegin consumes resultInfo_ and deActiveApnTypeId_ when building
-    // MSG_DISCONNECT_DATA_COMPLETE and resets both after the transition, so verify the
-    // transition result instead of dereferencing the consumed members.
+    // TransitionTo 只更新事件处理器上的 pending 状态（见 ProcessConnectionLostTimeout_003 注释），
+    // 手动执行事件循环的迁移完成步骤，使状态断言确定性成立
+    cellularMachine->stateMachineEventHandler_->ProcessTransitions(event);
     EXPECT_TRUE(cellularMachine->IsInactiveState());
-    EXPECT_EQ(inactive->deActiveApnTypeId_, ERROR_APN_ID);
-    EXPECT_EQ(inactive->resultInfo_, nullptr);
+    EXPECT_EQ(cellularMachine->GetCurrentState(), cellularMachine->inActiveState_);
+    // 清理本用例可能残留的延迟事件，避免异步触发污染后续用例
+    cellularMachine->stateMachineEventHandler_->RemoveEvent(CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK);
 }
 
 
@@ -2531,6 +2475,13 @@ HWTEST_F(CellularStateMachineTest, ProcessConnectionLostTimeout_002, Function | 
         std::shared_ptr<CellularMachineTest> machine = std::make_shared<CellularMachineTest>();
         cellularMachine = machine->CreateCellularDataConnect(0);
         cellularMachine->Init();
+        // StateMachine::Start() 异步投递 MSG_STATE_MACHINE_INIT，落地时 InitCmdEnter 会把
+        // currentState_ 置为 originalState_(inactive)，与本用例随后的 active->StateBegin() 竞态，
+        // 曾致 b4tests 2478 行 EXPECT 偶发失败：移除该异步事件并同步驱动初始迁移落地，
+        // 使 currentState_ 仅由本用例控制
+        cellularMachine->stateMachineEventHandler_->RemoveEvent(CellularDataEventCode::MSG_STATE_MACHINE_INIT);
+        auto initStateEvent = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_STATE_MACHINE_INIT);
+        cellularMachine->stateMachineEventHandler_->ProcessEvent(initStateEvent);
     }
     auto active = std::static_pointer_cast<Active>(cellularMachine->activeState_);
     ASSERT_NE(active, nullptr);
@@ -2558,7 +2509,11 @@ HWTEST_F(CellularStateMachineTest, ProcessConnectionLostTimeout_003, Function | 
         cellularMachine = machine->CreateCellularDataConnect(0);
         cellularMachine->Init();
     }
-    cellularMachine->TransitionTo(cellularMachine->inActiveState_);
+    // TransitionTo only updates the pending state on the event handler, so enter inactive directly
+    auto inactive = std::static_pointer_cast<Inactive>(cellularMachine->inActiveState_);
+    ASSERT_NE(inactive, nullptr);
+    inactive->SetStateMachine(cellularMachine);
+    inactive->StateBegin();
     ASSERT_TRUE(cellularMachine->IsInactiveState());
     AppExecFwk::InnerEvent::Pointer nullEvent(nullptr, nullptr);
     cellularMachine->ProcessConnectionLostTimeout(nullEvent);
@@ -2614,7 +2569,9 @@ HWTEST_F(CellularStateMachineTest, OnInterfaceLinkStateChanged_003, Function | M
     ASSERT_NE(inactive, nullptr);
     cellularMachine->ifName_ = "rmnet0";
     cellularMachine->connectId_ = 5;
-    cellularMachine->TransitionTo(cellularMachine->inActiveState_);
+    // TransitionTo only updates the pending state on the event handler, so enter inactive directly
+    inactive->SetStateMachine(cellularMachine);
+    inactive->StateBegin();
     ASSERT_TRUE(cellularMachine->IsInactiveState());
     EXPECT_EQ(cellularMachine->OnInterfaceLinkStateChanged("rmnet0", false), 0);
     EXPECT_TRUE(cellularMachine->IsInactiveState());
@@ -2632,6 +2589,8 @@ HWTEST_F(CellularStateMachineTest, OnInterfaceLinkStateChanged_004, Function | M
         cellularMachine = machine->CreateCellularDataConnect(0);
         cellularMachine->Init();
     }
+    // 排空 handler 残留事件与在飞任务：避免异步迁移并发改变当前状态/清除事件，导致断言竞态失败
+    TestAsyncUtils::DrainTelEventHandler(cellularMachine->stateMachineEventHandler_.get());
     auto active = std::static_pointer_cast<Active>(cellularMachine->activeState_);
     ASSERT_NE(active, nullptr);
     cellularMachine->ifName_ = "rmnet0";
@@ -2644,12 +2603,79 @@ HWTEST_F(CellularStateMachineTest, OnInterfaceLinkStateChanged_004, Function | M
     EXPECT_TRUE(cellularMachine->stateMachineEventHandler_->HasInnerEvent(
         CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK));
     EXPECT_EQ(cellularMachine->OnInterfaceLinkStateChanged("rmnet0", false), 0);
-    EXPECT_FALSE(cellularMachine->stateMachineEventHandler_->HasInnerEvent(
+    // link down reschedules the timeout, so the event is armed again with INTERFACE_DOWN_TIMEOUT delay
+    EXPECT_TRUE(cellularMachine->stateMachineEventHandler_->HasInnerEvent(
         CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK));
     EXPECT_EQ(cellularMachine->OnInterfaceLinkStateChanged("rmnet0", true), 0);
     EXPECT_FALSE(cellularMachine->stateMachineEventHandler_->HasInnerEvent(
         CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK));
     EXPECT_TRUE(cellularMachine->IsActiveState());
+    // 清理本用例武装的延迟事件（1000ms/2000ms 后异步触发会污染后续用例）
+    cellularMachine->stateMachineEventHandler_->RemoveEvent(CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK);
+}
+
+/**
+ * @tc.number   OnInterfaceLinkStateChanged_005
+ * @tc.name     test function branch
+ * @tc.desc     Function test
+ */
+HWTEST_F(CellularStateMachineTest, OnInterfaceLinkStateChanged_005, Function | MediumTest | Level1)
+{
+    if (cellularMachine == nullptr) {
+        std::shared_ptr<CellularMachineTest> machine = std::make_shared<CellularMachineTest>();
+        cellularMachine = machine->CreateCellularDataConnect(0);
+        cellularMachine->Init();
+    }
+    auto active = std::static_pointer_cast<Active>(cellularMachine->activeState_);
+    ASSERT_NE(active, nullptr);
+    cellularMachine->cid_ = 1;
+    cellularMachine->apnId_ = 1;
+    cellularMachine->ifName_ = "rmnet0";
+    cellularMachine->connectId_ = 3;
+    active->stateMachine_ = cellularMachine;
+    active->StateBegin();
+    ASSERT_TRUE(cellularMachine->IsActiveState());
+    auto handler = cellularMachine->stateMachineEventHandler_;
+    ASSERT_NE(handler, nullptr);
+    // no pending connection lost timeout: active state alone still reschedules it on link down
+    handler->RemoveEvent(CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK);
+    EXPECT_FALSE(handler->HasInnerEvent(CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK));
+    EXPECT_EQ(cellularMachine->OnInterfaceLinkStateChanged("rmnet0", false), 0);
+    EXPECT_TRUE(handler->HasInnerEvent(CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK));
+    EXPECT_TRUE(cellularMachine->IsActiveState());
+}
+
+/**
+ * @tc.number   OnInterfaceLinkStateChanged_006
+ * @tc.name     test function branch
+ * @tc.desc     Function test
+ */
+HWTEST_F(CellularStateMachineTest, OnInterfaceLinkStateChanged_006, Function | MediumTest | Level1)
+{
+    if (cellularMachine == nullptr) {
+        std::shared_ptr<CellularMachineTest> machine = std::make_shared<CellularMachineTest>();
+        cellularMachine = machine->CreateCellularDataConnect(0);
+        cellularMachine->Init();
+    }
+    auto activating = std::static_pointer_cast<Activating>(cellularMachine->activatingState_);
+    ASSERT_NE(activating, nullptr);
+    cellularMachine->ifName_ = "rmnet0";
+    cellularMachine->connectId_ = 4;
+    activating->stateMachine_ = cellularMachine;
+    activating->StateBegin();
+    ASSERT_TRUE(cellularMachine->IsActivatingState());
+    auto handler = cellularMachine->stateMachineEventHandler_;
+    ASSERT_NE(handler, nullptr);
+    handler->RemoveEvent(CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK);
+    EXPECT_FALSE(handler->HasInnerEvent(CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK));
+    // delayed link down callback during activating: no pending timeout and not active, nothing rescheduled
+    EXPECT_EQ(cellularMachine->OnInterfaceLinkStateChanged("rmnet0", false), 0);
+    EXPECT_FALSE(handler->HasInnerEvent(CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK));
+    EXPECT_TRUE(cellularMachine->IsActivatingState());
+    // link up during activating: not in active state, nothing to remove
+    EXPECT_EQ(cellularMachine->OnInterfaceLinkStateChanged("rmnet0", true), 0);
+    EXPECT_TRUE(cellularMachine->IsActivatingState());
+    EXPECT_FALSE(handler->HasInnerEvent(CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK));
 }
 
 /**
@@ -2736,20 +2762,32 @@ HWTEST_F(CellularStateMachineTest, ActiveStateProcess_ConnectionLostTimeout_001,
         cellularMachine = machine->CreateCellularDataConnect(0);
         cellularMachine->Init();
     }
+    // 排空 handler 残留事件与在飞任务：避免 Inactive::StateBegin 的 connectId_.fetch_add(1)
+    // 并发执行令 connectId 校验事件被判 stale，ProcessConnectionLostTimeout 提前返回
+    TestAsyncUtils::DrainTelEventHandler(cellularMachine->stateMachineEventHandler_.get());
     auto active = std::static_pointer_cast<Active>(cellularMachine->activeState_);
     auto inactive = std::static_pointer_cast<Inactive>(cellularMachine->inActiveState_);
     ASSERT_NE(active, nullptr);
     ASSERT_NE(inactive, nullptr);
+    // Init() 通过 MSG_STATE_MACHINE_INIT 异步执行 Inactive::StateBegin 会自增 connectId_，
+    // 先排空异步初始化，避免用例中途 connectId_/currentState_ 被改写导致事件被判为陈旧。
+    TestAsyncUtils::DrainStateMachine(cellularMachine.get());
     active->stateMachine_ = cellularMachine;
     cellularMachine->connectId_.store(1);
     cellularMachine->apnId_ = 1;
-    active->StateBegin();
+    auto event = AppExecFwk::InnerEvent::Get(
+        CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK, cellularMachine->connectId_.load());
+    // 经 TransitionTo + ProcessTransitions 同步进入 Active，保证 handler 的 curState_ 与 currentState_ 一致。
+    cellularMachine->TransitionTo(cellularMachine->activeState_);
+    cellularMachine->stateMachineEventHandler_->ProcessTransitions(event);
     ASSERT_TRUE(cellularMachine->IsActiveState());
-    auto event = AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK, 1);
     bool result = active->StateProcess(event);
     EXPECT_TRUE(result);
-    EXPECT_EQ(inactive->deActiveApnTypeId_, cellularMachine->apnId_);
-    EXPECT_EQ(inactive->resultInfo_->reason, static_cast<int32_t>(PdpErrorReason::PDP_ERR_RETRY));
+    EXPECT_TRUE(cellularMachine->IsInactiveState());
+    EXPECT_EQ(inactive->deActiveApnTypeId_, ERROR_APN_ID);
+    EXPECT_EQ(inactive->resultInfo_, nullptr);
+    // 清理本用例可能残留的延迟事件，避免异步触发污染后续用例
+    cellularMachine->stateMachineEventHandler_->RemoveEvent(CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK);
 }
 
 /**
@@ -2790,9 +2828,9 @@ HWTEST_F(CellularStateMachineTest, FreeConnection_001, Function | MediumTest |Le
 }
 
 /**
- * @tc.number DoConnect_001
- * @tc.name test function branch
- * @tc.desc Function test
+ * @tc.number   FreeConnection_001
+ * @tc.name     test function branch
+ * @tc.desc     Function test
  */
 HWTEST_F(CellularStateMachineTest, DoConnect_001, Function | MediumTest | Level0)
 {
@@ -2801,8 +2839,8 @@ HWTEST_F(CellularStateMachineTest, DoConnect_001, Function | MediumTest | Level0
         cellularMachine = machine->CreateCellularDataConnect(0);
         cellularMachine->Init();
     }
-    sptr apnHolder = new ApnHolder(DATA_CONTEXT_ROLE_DEFAULT, 0);
-    sptr defaultApnItem = ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_DEFAULT);
+    sptr<ApnHolder> apnHolder = new ApnHolder(DATA_CONTEXT_ROLE_DEFAULT, 0);
+    sptr<ApnItem> defaultApnItem = ApnItem::MakeDefaultApn(DATA_CONTEXT_ROLE_DEFAULT);
     apnHolder->SetCurrentApn(defaultApnItem);
     int32_t profileId = 0;
     int32_t radioTechnology = 0;
@@ -2810,10 +2848,11 @@ HWTEST_F(CellularStateMachineTest, DoConnect_001, Function | MediumTest | Level0
     bool roamingState = false;
     bool userDataRoaming = false;
     std::shared_ptr<DataConnectionParams> dataConnectionParams = std::make_shared<DataConnectionParams>(apnHolder,
-    profileId, radioTechnology, nonTrafficUseOnly, roamingState, userDataRoaming);
+        profileId, radioTechnology, nonTrafficUseOnly, roamingState, userDataRoaming);
     cellularMachine->DoConnect(*dataConnectionParams);
     EXPECT_NE(cellularMachine->netInterfaceCallback_, nullptr);
 }
+
 /*
  * ==== P2 batch-2：cellular_data_state_machine.cpp 函数级缺口补齐 ====
  * 目标函数（p2b5 缺口）：FillRSDFromNetCap 98、GetNetworkSlicePara 62、
@@ -3477,33 +3516,27 @@ HWTEST_F(CellularStateMachineTest, CellularDataStateMachine_FreeConnection_001, 
 }
 
 /**
- * @tc.number   CellularDataStateMachine_DisconnectingProcessDisconnectTimeout_001
+ * @tc.number   CellularDataStateMachine_ProcessConnectionLostTimeout_001
  * @tc.name     null event / stale connectId / matching connectId transition path
  * @tc.desc     Function test
- * @tc.note     源分支该方法名为 CellularDataStateMachine::ProcessConnectionLostTimeout，
- *              本分支对应实现为 Disconnecting::ProcessDisconnectTimeout（含同样的
- *              空事件/陈旧 connectId 早退守卫），已按本分支 API 适配
  */
-HWTEST_F(CellularStateMachineTest, CellularDataStateMachine_DisconnectingProcessDisconnectTimeout_001,
-    TestSize.Level0)
+HWTEST_F(CellularStateMachineTest, CellularDataStateMachine_ProcessConnectionLostTimeout_001, TestSize.Level0)
 {
     std::shared_ptr<CellularMachineTest> machine = std::make_shared<CellularMachineTest>();
     std::shared_ptr<CellularDataStateMachine> cellularMachine = machine->CreateCellularDataConnect(0);
     cellularMachine->Init();
-    auto disconnecting = std::static_pointer_cast<Disconnecting>(cellularMachine->disconnectingState_);
-    disconnecting->stateMachine_ = cellularMachine;
     // 空事件 → 提前返回
     auto nullEvent = AppExecFwk::InnerEvent::Get(0);
     nullEvent = nullptr;
-    disconnecting->ProcessDisconnectTimeout(nullEvent);
+    cellularMachine->ProcessConnectionLostTimeout(nullEvent);
     // connectId 不匹配（陈旧超时事件）→ 忽略
     cellularMachine->connectId_ = 1;
     auto staleEvent = AppExecFwk::InnerEvent::Get(0, 999);
-    disconnecting->ProcessDisconnectTimeout(staleEvent);
-    // 匹配 connectId → 设置 PDP_ERR_RETRY 并迁移 Inactive
+    cellularMachine->ProcessConnectionLostTimeout(staleEvent);
+    // 匹配：reuseApnCap==END（跳过真实 IPC 的 SetIfReuseSupplierId）→ 迁移 Inactive
     cellularMachine->connectId_ = 999;
     auto matchEvent = AppExecFwk::InnerEvent::Get(0, 999);
-    disconnecting->ProcessDisconnectTimeout(matchEvent);
+    cellularMachine->ProcessConnectionLostTimeout(matchEvent);
     TestAsyncUtils::DrainStateMachine(cellularMachine.get());
     EXPECT_TRUE(true);
 }

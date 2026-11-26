@@ -22,7 +22,10 @@
 
 namespace OHOS {
 namespace Telephony {
-DataConnectionMonitor::DataConnectionMonitor(int32_t slotId) : TelEventHandler("DataConnectionMonitor"), slotId_(slotId)
+DataConnectionMonitor::DataConnectionMonitor(
+    int32_t slotId, std::shared_ptr<AppExecFwk::EventHandler> pdpContextListObserver)
+    : TelEventHandler("DataConnectionMonitor"), slotId_(slotId),
+      pdpContextListObserver_(std::move(pdpContextListObserver))
 {
     trafficManager_ = std::make_unique<TrafficManagement>(slotId);
     stallDetectionTrafficManager_ = std::make_unique<TrafficManagement>(slotId);
@@ -233,8 +236,13 @@ void DataConnectionMonitor::UpdateNetTrafficState()
 
 void DataConnectionMonitor::GetPdpContextList()
 {
+    // The solicited query response carries the same DataCallResultList as the unsolicited
+    // RADIO_DATA_CALL_LIST_CHANGED report. Route it to the data connection state machine so
+    // that a cid reported as inactive runs the same retry path as a modem initiated release.
+    std::shared_ptr<AppExecFwk::EventHandler> observer =
+        (pdpContextListObserver_ != nullptr) ? pdpContextListObserver_ : shared_from_this();
     CoreManagerInner::GetInstance().GetPdpContextList(slotId_,
-        RadioEvent::RADIO_DATA_CALL_LIST_CHANGED, shared_from_this());
+        RadioEvent::RADIO_DATA_CALL_LIST_CHANGED, observer);
 }
 
 void DataConnectionMonitor::SetRadioState(const int32_t &radioState, const int32_t &eventCode)
@@ -323,14 +331,6 @@ CellDataFlowType DataConnectionMonitor::GetDataFlowType()
     return dataFlowType_;
 }
 
-void DataConnectionMonitor::SetDataFlowType(CellDataFlowType dataFlowType)
-{
-    if (dataFlowType_ != dataFlowType) {
-        dataFlowType_ = dataFlowType;
-        StateNotification::GetInstance().OnUpDataFlowtype(slotId_, dataFlowType_);
-    }
-}
-
 void DataConnectionMonitor::IsNeedDoRecovery(bool needDoRecovery)
 {
     if (needDoRecovery) {
@@ -344,6 +344,14 @@ void DataConnectionMonitor::IsNeedDoRecovery(bool needDoRecovery)
         AppExecFwk::InnerEvent::Pointer event =
             AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_STALL_DETECTION_EVENT_ID);
         SendEvent(event, stallDetectionPeriod, Priority::LOW);
+    }
+}
+
+void DataConnectionMonitor::SetDataFlowType(CellDataFlowType dataFlowType)
+{
+    if (dataFlowType_ != dataFlowType) {
+        dataFlowType_ = dataFlowType;
+        StateNotification::GetInstance().OnUpDataFlowtype(slotId_, dataFlowType_);
     }
 }
 

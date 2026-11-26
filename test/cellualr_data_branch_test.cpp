@@ -410,9 +410,9 @@ HWTEST_F(CellularStateMachineTest, Disconnecting_ProcessRilDeactivateDataCall_00
 }
 
 /**
- * @tc.number Disconnecting_ProcessRilDeactivateDataCall_004
- * @tc.name test function branch
- * @tc.desc Function test
+ * @tc.number   Disconnecting_ProcessRilDeactivateDataCall_004
+ * @tc.name     test function branch
+ * @tc.desc     Function test
  */
 HWTEST_F(CellularStateMachineTest, Disconnecting_ProcessRilDeactivateDataCall_004, Function | MediumTest | Level1)
 {

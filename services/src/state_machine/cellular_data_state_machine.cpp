@@ -54,26 +54,31 @@ void CellularDataStateMachine::UnregisterNetInterfaceCallback()
 
 bool CellularDataStateMachine::IsInactiveState() const
 {
+    std::lock_guard<std::mutex> lock(currentStateMutex_);
     return currentState_ == inActiveState_;
 }
 
 bool CellularDataStateMachine::IsActivatingState() const
 {
+    std::lock_guard<std::mutex> lock(currentStateMutex_);
     return currentState_ == activatingState_;
 }
 
 bool CellularDataStateMachine::IsDisconnectingState() const
 {
+    std::lock_guard<std::mutex> lock(currentStateMutex_);
     return currentState_ == disconnectingState_;
 }
 
 bool CellularDataStateMachine::IsActiveState() const
 {
+    std::lock_guard<std::mutex> lock(currentStateMutex_);
     return currentState_ == activeState_;
 }
 
 bool CellularDataStateMachine::IsDefaultState() const
 {
+    std::lock_guard<std::mutex> lock(currentStateMutex_);
     return currentState_ == defaultState_;
 }
 
@@ -317,11 +322,13 @@ void CellularDataStateMachine::Init()
 
 void CellularDataStateMachine::SetCurrentState(std::shared_ptr<State> state)
 {
+    std::lock_guard<std::mutex> lock(currentStateMutex_);
     currentState_ = state;
 }
 
 std::shared_ptr<State> CellularDataStateMachine::GetCurrentState() const
 {
+    std::lock_guard<std::mutex> lock(currentStateMutex_);
     return currentState_;
 }
 

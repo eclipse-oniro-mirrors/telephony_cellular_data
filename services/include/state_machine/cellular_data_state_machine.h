@@ -122,6 +122,7 @@ private:
     sptr<ApnItem> apnItem_;
     int32_t apnId_;
     std::mutex mtx_;
+    mutable std::mutex currentStateMutex_;
     uint32_t upBandwidth_ = 0;
     uint32_t downBandwidth_ = 0;
     std::string tcpBuffer_;
@@ -133,6 +134,7 @@ private:
     sptr<OHOS::NetManagerStandard::INetInterfaceStateCallback> netInterfaceCallback_ = nullptr;
     uint64_t reuseApnCap_ = NetManagerStandard::NetCap::NET_CAPABILITY_END;
 };
+
 } // namespace Telephony
 } // namespace OHOS
 #endif // CELLULAR_DATA_STATE_MACHINE_H
