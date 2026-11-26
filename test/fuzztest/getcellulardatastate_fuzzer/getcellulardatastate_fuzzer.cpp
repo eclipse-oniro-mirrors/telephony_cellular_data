@@ -130,7 +130,7 @@ void IsCellularDataRoamingEnabled(const uint8_t *data, size_t size)
         return;
     }
     FuzzedDataProvider fdp(data, size);
-    int32_t slotId = fdp.ConsumeIntegralInRange<uint32_t>(0, SLOT_NUM_MAX);
+    int32_t slotId = fdp.ConsumeIntegralInRange<int32_t>(0, SLOT_NUM_MAX);
     MessageParcel dataMessageParcel;
     if (!dataMessageParcel.WriteInterfaceToken(GetDescriptor())) {
         return;
@@ -169,7 +169,7 @@ void EnableCellularDataRoaming(const uint8_t *data, size_t size)
     }
 
     FuzzedDataProvider fdp(data, size);
-    int32_t slotId = fdp.ConsumeIntegralInRange<uint32_t>(0, SLOT_NUM_MAX);
+    int32_t slotId = fdp.ConsumeIntegralInRange<int32_t>(0, SLOT_NUM_MAX);
     MessageParcel dataMessageParcel;
     if (!dataMessageParcel.WriteInterfaceToken(GetDescriptor())) {
         return;
@@ -190,7 +190,7 @@ void SetDefaultCellularDataSlotId(const uint8_t *data, size_t size)
     }
 
     FuzzedDataProvider fdp(data, size);
-    int32_t slotId = fdp.ConsumeIntegralInRange<uint32_t>(0, SLOT_NUM_MAX);
+    int32_t slotId = fdp.ConsumeIntegralInRange<int32_t>(0, SLOT_NUM_MAX);
     MessageParcel dataMessageParcel;
     if (!dataMessageParcel.WriteInterfaceToken(GetDescriptor())) {
         return;
@@ -211,7 +211,7 @@ void HasInternetCapability(const uint8_t *data, size_t size)
     }
 
     FuzzedDataProvider fdp(data, size);
-    int32_t slotId = fdp.ConsumeIntegralInRange<uint32_t>(0, SLOT_NUM_MAX);
+    int32_t slotId = fdp.ConsumeIntegralInRange<int32_t>(0, SLOT_NUM_MAX);
     MessageParcel dataMessageParcel;
     if (!dataMessageParcel.WriteInterfaceToken(GetDescriptor())) {
         return;
@@ -324,7 +324,7 @@ void HandleApnChanged(const uint8_t *data, size_t size)
     }
 
     FuzzedDataProvider fdp(data, size);
-    int32_t slotId = fdp.ConsumeIntegralInRange<uint32_t>(0, SLOT_NUM_MAX);
+    int32_t slotId = fdp.ConsumeIntegralInRange<int32_t>(0, SLOT_NUM_MAX);
     MessageParcel dataMessageParcel;
     if (!dataMessageParcel.WriteInterfaceToken(GetDescriptor())) {
         return;
@@ -363,7 +363,7 @@ void GetDataConnApnAttr(const uint8_t *data, size_t size)
     }
 
     FuzzedDataProvider fdp(data, size);
-    int32_t slotId = fdp.ConsumeIntegralInRange<uint32_t>(0, SLOT_NUM_MAX);
+    int32_t slotId = fdp.ConsumeIntegralInRange<int32_t>(0, SLOT_NUM_MAX);
     MessageParcel dataMessageParcel;
     if (!dataMessageParcel.WriteInterfaceToken(GetDescriptor())) {
         return;
@@ -384,7 +384,7 @@ void GetDataConnIpType(const uint8_t *data, size_t size)
     }
 
     FuzzedDataProvider fdp(data, size);
-    int32_t slotId = fdp.ConsumeIntegralInRange<uint32_t>(0, SLOT_NUM_MAX);
+    int32_t slotId = fdp.ConsumeIntegralInRange<int32_t>(0, SLOT_NUM_MAX);
     MessageParcel dataMessageParcel;
     if (!dataMessageParcel.WriteInterfaceToken(GetDescriptor())) {
         return;
@@ -405,7 +405,7 @@ void GetApnState(const uint8_t *data, size_t size)
     }
 
     FuzzedDataProvider fdp(data, size);
-    int32_t slotId = fdp.ConsumeIntegralInRange<uint32_t>(0, SLOT_NUM_MAX);
+    int32_t slotId = fdp.ConsumeIntegralInRange<int32_t>(0, SLOT_NUM_MAX);
     MessageParcel dataMessageParcel;
     if (!dataMessageParcel.WriteInterfaceToken(GetDescriptor())) {
         return;
@@ -451,7 +451,7 @@ void GetCellularDataSupplierId(const uint8_t *data, size_t size)
         return;
     }
     FuzzedDataProvider fdp(data, size);
-    int32_t slotId = fdp.ConsumeIntegralInRange<uint32_t>(0, SLOT_NUM_MAX);
+    int32_t slotId = fdp.ConsumeIntegralInRange<int32_t>(0, SLOT_NUM_MAX);
     dataMessageParcel.WriteInt32(slotId);
     uint64_t capability = fdp.ConsumeIntegralInRange<uint64_t>(0, NET_CAPABILITY_MAX);
     dataMessageParcel.WriteUint64(capability);
@@ -469,7 +469,7 @@ void IsNeedDoRecovery(const uint8_t *data, size_t size)
     }
 
     FuzzedDataProvider fdp(data, size);
-    int32_t slotId = fdp.ConsumeIntegralInRange<uint32_t>(0, SLOT_NUM_MAX);
+    int32_t slotId = fdp.ConsumeIntegralInRange<int32_t>(0, SLOT_NUM_MAX);
     MessageParcel dataMessageParcel;
     if (!dataMessageParcel.WriteInterfaceToken(GetDescriptor())) {
         return;
@@ -490,7 +490,7 @@ void CorrectNetSupplierNoAvailable(const uint8_t *data, size_t size)
     }
 
     FuzzedDataProvider fdp(data, size);
-    int32_t slotId = fdp.ConsumeIntegralInRange<uint32_t>(0, SLOT_NUM_MAX);
+    int32_t slotId = fdp.ConsumeIntegralInRange<int32_t>(0, SLOT_NUM_MAX);
     MessageParcel dataMessageParcel;
     if (!dataMessageParcel.WriteInterfaceToken(GetDescriptor())) {
         return;
@@ -553,7 +553,7 @@ void SetPreferApn(const uint8_t *data, size_t size)
         return;
     }
     FuzzedDataProvider fdp(data, size);
-    int32_t apnId = fdp.ConsumeIntegralInRange<uint32_t>(0, APN_ID_MAX);
+    int32_t apnId = fdp.ConsumeIntegralInRange<int32_t>(0, APN_ID_MAX);
     dataMessageParcel.WriteInt32(apnId);
     dataMessageParcel.RewindRead(0);
     uint32_t code = static_cast<uint32_t>(ICellularDataManagerIpcCode::COMMAND_SET_PREFER_APN);
@@ -569,7 +569,7 @@ void InitCellularDataController(const uint8_t *data, size_t size)
     }
 
     FuzzedDataProvider fdp(data, size);
-    int32_t slotId = fdp.ConsumeIntegralInRange<uint32_t>(0, SLOT_NUM_MAX);
+    int32_t slotId = fdp.ConsumeIntegralInRange<int32_t>(0, SLOT_NUM_MAX);
     MessageParcel dataMessageParcel;
     if (!dataMessageParcel.WriteInterfaceToken(GetDescriptor())) {
         return;
@@ -590,7 +590,7 @@ void EstablishAllApnsIfConnectable(const uint8_t *data, size_t size)
     }
 
     FuzzedDataProvider fdp(data, size);
-    int32_t slotId = fdp.ConsumeIntegralInRange<uint32_t>(0, SLOT_NUM_MAX);
+    int32_t slotId = fdp.ConsumeIntegralInRange<int32_t>(0, SLOT_NUM_MAX);
     MessageParcel dataMessageParcel;
     if (!dataMessageParcel.WriteInterfaceToken(GetDescriptor())) {
         return;
@@ -611,7 +611,7 @@ void GetSupplierRegisterState(const uint8_t *data, size_t size)
     }
 
     FuzzedDataProvider fdp(data, size);
-    int32_t slotId = fdp.ConsumeIntegralInRange<uint32_t>(0, SLOT_NUM_MAX);
+    int32_t slotId = fdp.ConsumeIntegralInRange<int32_t>(0, SLOT_NUM_MAX);
     MessageParcel dataMessageParcel;
     if (!dataMessageParcel.WriteInterfaceToken(GetDescriptor())) {
         return;
@@ -659,7 +659,7 @@ void DispatchEventFuzzTest(const uint8_t *data, size_t size)
     }
 
     FuzzedDataProvider fdp(data, size);
-    int32_t slotId = fdp.ConsumeIntegralInRange<uint32_t>(0, SLOT_NUM_MAX);
+    int32_t slotId = fdp.ConsumeIntegralInRange<int32_t>(0, SLOT_NUM_MAX);
     AppExecFwk::InnerEvent::Pointer event(nullptr, nullptr);
     DelayedSingleton<CellularDataService>::GetInstance()->DispatchEvent(slotId, event);
     DelayedSingleton<CellularDataService>::GetInstance()->UnRegisterAllNetSpecifier();
@@ -672,7 +672,7 @@ void StrategySwitchFuzzTest(const uint8_t *data, size_t size)
     }
 
     FuzzedDataProvider fdp(data, size);
-    int32_t slotId = fdp.ConsumeIntegralInRange<uint32_t>(0, SLOT_NUM_MAX);
+    int32_t slotId = fdp.ConsumeIntegralInRange<int32_t>(0, SLOT_NUM_MAX);
     bool enable = fdp.ConsumeBool();
     DelayedSingleton<CellularDataService>::GetInstance()->GetBeginTime();
     DelayedSingleton<CellularDataService>::GetInstance()->GetEndTime();
@@ -689,7 +689,7 @@ void ChangeConnectionForDsdsFuzzTest(const uint8_t *data, size_t size)
     }
 
     FuzzedDataProvider fdp(data, size);
-    int32_t slotId = fdp.ConsumeIntegralInRange<uint32_t>(0, SLOT_NUM_MAX);
+    int32_t slotId = fdp.ConsumeIntegralInRange<int32_t>(0, SLOT_NUM_MAX);
     bool enable = fdp.ConsumeBool();
     DelayedSingleton<CellularDataService>::GetInstance()->ChangeConnectionForDsds(slotId, enable);
     DelayedSingleton<CellularDataService>::GetInstance()->GetSpendTime();
@@ -702,7 +702,7 @@ void SendUrspDecodeResultFuzzTest(const uint8_t *data, size_t size)
     }
 
     FuzzedDataProvider fdp(data, size);
-    int32_t slotId = fdp.ConsumeIntegralInRange<uint32_t>(0, SLOT_NUM_MAX);
+    int32_t slotId = fdp.ConsumeIntegralInRange<int32_t>(0, SLOT_NUM_MAX);
     std::vector<ApnInfo> allApnInfoList;
     DelayedSingleton<CellularDataService>::GetInstance()->QueryAllApnInfo(allApnInfoList);
     std::vector<uint8_t> buffer;
@@ -719,7 +719,7 @@ void GetActiveApnNameFuzzTest(const uint8_t *data, size_t size)
     }
 
     FuzzedDataProvider fdp(data, size);
-    int32_t slotId = fdp.ConsumeIntegralInRange<uint32_t>(0, SLOT_NUM_MAX);
+    int32_t slotId = fdp.ConsumeIntegralInRange<int32_t>(0, SLOT_NUM_MAX);
     DelayedSingleton<CellularDataService>::GetInstance()->GetNetworkSliceEhplmn(slotId);
     std::string apnName = fdp.ConsumeRandomLengthString(APN_STRING_LENGTH);
     DelayedSingleton<CellularDataService>::GetInstance()->GetActiveApnName(apnName);

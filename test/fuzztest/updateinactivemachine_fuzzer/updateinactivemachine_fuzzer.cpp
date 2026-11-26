@@ -31,7 +31,6 @@ using namespace AppExecFwk;
 using namespace OHOS::EventFwk;
 constexpr int32_t SLOT_NUM_MAX = 3;
 constexpr int32_t EVENT_ID_MAX = 255;
-bool g_flag = false;
 
 void UpdateInActiveMachineFuzz(const uint8_t *data, size_t size)
 {
@@ -40,7 +39,7 @@ void UpdateInActiveMachineFuzz(const uint8_t *data, size_t size)
         return;
     }
     FuzzedDataProvider fdp(data, size);
-    int32_t slotId = fdp.ConsumeIntegralInRange<uint32_t>(0, SLOT_NUM_MAX);
+    int32_t slotId = fdp.ConsumeIntegralInRange<int32_t>(0, SLOT_NUM_MAX);
     std::shared_ptr<CellularDataStateMachine> cellularMachine = machine->CreateCellularDataConnect(slotId);
     if (cellularMachine == nullptr) {
         return;
@@ -56,7 +55,7 @@ void UpdateInActiveMachineFuzz(const uint8_t *data, size_t size)
         return;
     }
 
-    std::int32_t intValue = fdp.ConsumeIntegralInRange<uint32_t>(0, EVENT_ID_MAX);
+    std::int32_t intValue = fdp.ConsumeIntegralInRange<int32_t>(0, EVENT_ID_MAX);
     std::unique_ptr<uint8_t> object = std::make_unique<uint8_t>(*data);
     if (object == nullptr) {
         return;
@@ -72,15 +71,12 @@ void UpdateInActiveMachineFuzz(const uint8_t *data, size_t size)
     activating->StateProcess(event);
 }
 
-void UpdateActiveMachineWithMyAPI(const uint8_t *data, size_t size)
+void UpdateInActiveMachineWithMyAPI(const uint8_t *data, size_t size)
 {
     if (data == nullptr || size == 0) {
         return;
     }
-    if (!g_flag) {
-        UpdateInActiveMachineFuzz(data, size);
-        g_flag = true;
-    }
+    UpdateInActiveMachineFuzz(data, size);
 }
 } // namespace OHOS
 
@@ -89,6 +85,6 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
     OHOS::AddDataTokenFuzzer token;
     /* Run your code on data */
-    OHOS::UpdateActiveMachineWithMyAPI(data, size);
+    OHOS::UpdateInActiveMachineWithMyAPI(data, size);
     return 0;
 }
