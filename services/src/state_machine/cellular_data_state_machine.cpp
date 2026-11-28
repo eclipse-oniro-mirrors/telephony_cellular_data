@@ -43,33 +43,42 @@ CellularDataStateMachine::~CellularDataStateMachine()
 void CellularDataStateMachine::UnregisterNetInterfaceCallback()
 {
     if (netInterfaceCallback_ != nullptr) {
+        TELEPHONY_LOGI("Slot%{public}d: unregister net interface callback", GetSlotId());
         OHOS::NetManagerStandard::NetConnClient::GetInstance().UnregisterNetInterfaceCallback(
             netInterfaceCallback_);
+        netInterfaceCallback_ = nullptr;
+    } else {
+        TELEPHONY_LOGI("Slot%{public}d: net interface callback already null, skip unregister", GetSlotId());
     }
 }
 
 bool CellularDataStateMachine::IsInactiveState() const
 {
+    std::lock_guard<std::mutex> lock(currentStateMutex_);
     return currentState_ == inActiveState_;
 }
 
 bool CellularDataStateMachine::IsActivatingState() const
 {
+    std::lock_guard<std::mutex> lock(currentStateMutex_);
     return currentState_ == activatingState_;
 }
 
 bool CellularDataStateMachine::IsDisconnectingState() const
 {
+    std::lock_guard<std::mutex> lock(currentStateMutex_);
     return currentState_ == disconnectingState_;
 }
 
 bool CellularDataStateMachine::IsActiveState() const
 {
+    std::lock_guard<std::mutex> lock(currentStateMutex_);
     return currentState_ == activeState_;
 }
 
 bool CellularDataStateMachine::IsDefaultState() const
 {
+    std::lock_guard<std::mutex> lock(currentStateMutex_);
     return currentState_ == defaultState_;
 }
 
@@ -193,7 +202,7 @@ void CellularDataStateMachine::FreeConnection(const DataDisconnectParams &params
         return;
     }
     stateMachineEventHandler_->SendEvent(
-        CellularDataEventCode::MSG_DISCONNECT_TIMEOUT_CHECK, connectId_.load(), DISCONNECTION_TIMEOUT);
+        CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK, connectId_.load(), DISCONNECTION_TIMEOUT);
 }
 
 int32_t CellularDataStateMachine::NetInterfaceCallback::OnInterfaceLinkStateChanged(const std::string &ifName, bool up)
@@ -210,23 +219,61 @@ int32_t CellularDataStateMachine::NetInterfaceCallback::OnInterfaceLinkStateChan
 int32_t CellularDataStateMachine::OnInterfaceLinkStateChanged(const std::string &ifName, bool up)
 {
     std::unique_lock<std::mutex> lock(mtx_);
-    if (ifName != ifName_) {
+    if (ifName_.empty() || ifName != ifName_) {
         return 0;
     }
     lock.unlock();
+    if (stateMachineEventHandler_ == nullptr) {
+        TELEPHONY_LOGE("stateMachineEventHandler_ is nullptr");
+        return 0;
+    }
     if (!up) {
-        if (stateMachineEventHandler_ == nullptr) {
-            TELEPHONY_LOGE("stateMachineEventHandler_ is nullptr");
-            return 0;
-        }
-        if (stateMachineEventHandler_->HasInnerEvent(CellularDataEventCode::MSG_DISCONNECT_TIMEOUT_CHECK)) {
-            TELEPHONY_LOGI("connectId_:%{public}d", connectId_.load());
-            stateMachineEventHandler_->RemoveEvent(CellularDataEventCode::MSG_DISCONNECT_TIMEOUT_CHECK);
+        // Only handle link down after activation completes. During activating, ifName_ may still belong to the
+        // previous connection and a delayed callback could otherwise affect the new connection.
+        if (stateMachineEventHandler_->HasInnerEvent(CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK)
+            || IsActiveState()) {
+            TELEPHONY_LOGI("Slot%{public}d: interface down, reschedule connection lost timeout %{public}dms, "
+                "connectId=%{public}d", GetSlotId(), INTERFACE_DOWN_TIMEOUT, connectId_.load());
+            stateMachineEventHandler_->RemoveEvent(CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK);
             stateMachineEventHandler_->SendEvent(
-                CellularDataEventCode::MSG_DISCONNECT_TIMEOUT_CHECK, connectId_.load(), INTERFACE_DOWN_TIMEOUT);
+                CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK, connectId_.load(), INTERFACE_DOWN_TIMEOUT);
+        }
+    } else {
+        if (IsActiveState()) {
+            stateMachineEventHandler_->RemoveEvent(CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK);
         }
     }
     return 0;
+}
+
+void CellularDataStateMachine::ProcessConnectionLostTimeout(const AppExecFwk::InnerEvent::Pointer &event)
+{
+    if (event == nullptr) {
+        TELEPHONY_LOGE("connection lost timeout event is null");
+        return;
+    }
+    int32_t eventConnectId = event->GetParam();
+    if (eventConnectId != connectId_.load()) {
+        TELEPHONY_LOGI("Slot%{public}d: ignore stale connection lost timeout, eventConnectId=%{public}d "
+            "connectId=%{public}d", GetSlotId(), eventConnectId, connectId_.load());
+        return;
+    }
+    auto inActive = std::static_pointer_cast<Inactive>(inActiveState_);
+    if (inActive == nullptr) {
+        TELEPHONY_LOGE("Slot%{public}d: inActive is null", GetSlotId());
+        return;
+    }
+    if (GetReuseApnCap() != NetManagerStandard::NetCap::NET_CAPABILITY_END) {
+        SetIfReuseSupplierId(false);
+        SetReuseApnCap(NetManagerStandard::NetCap::NET_CAPABILITY_END);
+    }
+    CellularDataHiSysEvent::WriteDataDeactiveBehaviorEvent(GetSlotId(),
+        DataDisconnectCause::INTERFACE_DOWN, ApnManager::FindApnNameByApnId(apnId_));
+    inActive->SetPdpErrorReason(PdpErrorReason::PDP_ERR_RETRY);
+    inActive->SetDeActiveApnTypeId(apnId_);
+    TransitionTo(inActiveState_);
+    TELEPHONY_LOGI("Slot%{public}d: connection lost timeout, transition to inactive, connectId=%{public}d", GetSlotId(),
+        connectId_.load());
 }
 
 bool CellularDataStateMachine::operator==(const CellularDataStateMachine &stateMachine) const
@@ -261,7 +308,13 @@ void CellularDataStateMachine::Init()
     netInterfaceCallback_ =
         sptr<NetInterfaceCallback>::MakeSptr(std::weak_ptr<CellularDataStateMachine>(shared_from_this()));
     if (netInterfaceCallback_ != nullptr) {
-        OHOS::NetManagerStandard::NetConnClient::GetInstance().RegisterNetInterfaceCallback(netInterfaceCallback_);
+        int32_t ret = OHOS::NetManagerStandard::NetConnClient::GetInstance().RegisterNetInterfaceCallback(
+            netInterfaceCallback_);
+        TELEPHONY_LOGI("Slot%{public}d: register net interface callback, ret=%{public}d", GetSlotId(), ret);
+    } else {
+        // LCOV_EXCL_START
+        TELEPHONY_LOGE("Slot%{public}d: create NetInterfaceCallback failed", GetSlotId());
+        // LCOV_EXCL_STOP
     }
     StateMachine::SetOriginalState(inActiveState_);
     StateMachine::Start();
@@ -269,11 +322,13 @@ void CellularDataStateMachine::Init()
 
 void CellularDataStateMachine::SetCurrentState(std::shared_ptr<State> state)
 {
+    std::lock_guard<std::mutex> lock(currentStateMutex_);
     currentState_ = state;
 }
 
 std::shared_ptr<State> CellularDataStateMachine::GetCurrentState() const
 {
+    std::lock_guard<std::mutex> lock(currentStateMutex_);
     return currentState_;
 }
 

@@ -26,6 +26,9 @@ void Inactive::StateBegin()
         return;
     }
     stateMachine->connectId_.fetch_add(1);
+    if (stateMachine->stateMachineEventHandler_ != nullptr) {
+        stateMachine->stateMachineEventHandler_->RemoveEvent(CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK);
+    }
     isActive_ = true;
     if (deActiveApnTypeId_ != ERROR_APN_ID) {
         // set net manager connection false

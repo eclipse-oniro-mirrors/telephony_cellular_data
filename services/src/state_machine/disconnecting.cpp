@@ -38,32 +38,6 @@ void Disconnecting::StateEnd()
     isActive_ = false;
 }
 
-void Disconnecting::ProcessDisconnectTimeout(const AppExecFwk::InnerEvent::Pointer &event)
-{
-    if (event == nullptr) {
-        TELEPHONY_LOGE("event is null");
-        return;
-    }
-    int32_t connectId = event->GetParam();
-    std::shared_ptr<CellularDataStateMachine> stateMachine = stateMachine_.lock();
-    if (stateMachine == nullptr) {
-        TELEPHONY_LOGE("stateMachine is null");
-        return;
-    }
-    if (connectId != stateMachine->connectId_.load()) {
-        return;
-    }
-    auto inActive = std::static_pointer_cast<Inactive>(stateMachine->inActiveState_);
-    if (inActive == nullptr) {
-        TELEPHONY_LOGE("inActive is null");
-        return;
-    }
-    inActive->SetPdpErrorReason(PdpErrorReason::PDP_ERR_RETRY);
-    inActive->SetDeActiveApnTypeId(stateMachine->apnId_);
-    stateMachine->TransitionTo(stateMachine->inActiveState_);
-    TELEPHONY_LOGI("ProcessDisconnectTimeout");
-}
-
 void Disconnecting::ProcessRilAdapterHostDied(const AppExecFwk::InnerEvent::Pointer &event)
 {
     std::shared_ptr<CellularDataStateMachine> stateMachine = stateMachine_.lock();
@@ -101,7 +75,7 @@ void Disconnecting::ProcessRilDeactivateDataCall(const AppExecFwk::InnerEvent::P
     std::shared_ptr<RadioResponseInfo> rilInfo = event->GetSharedObject<RadioResponseInfo>();
     if (rilInfo == nullptr) {
         TELEPHONY_LOGE("SetupDataCallResultInfo and RadioResponseInfo is null");
-        stateMachine->stateMachineEventHandler_->RemoveEvent(CellularDataEventCode::MSG_DISCONNECT_TIMEOUT_CHECK);
+        stateMachine->stateMachineEventHandler_->RemoveEvent(CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK);
         inActive->SetDeActiveApnTypeId(stateMachine->apnId_);
         stateMachine->TransitionTo(stateMachine->inActiveState_);
         return;
@@ -111,7 +85,7 @@ void Disconnecting::ProcessRilDeactivateDataCall(const AppExecFwk::InnerEvent::P
         return;
     }
     TELEPHONY_LOGI("RadioResponseInfo error is %{public}d", static_cast<int32_t>(rilInfo->error));
-    stateMachine->stateMachineEventHandler_->RemoveEvent(CellularDataEventCode::MSG_DISCONNECT_TIMEOUT_CHECK);
+    stateMachine->stateMachineEventHandler_->RemoveEvent(CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK);
     inActive->SetDeActiveApnTypeId(stateMachine->apnId_);
     stateMachine->TransitionTo(stateMachine->inActiveState_);
     TELEPHONY_LOGI("ProcessRilDeactivateDataCall");
@@ -140,8 +114,8 @@ bool Disconnecting::StateProcess(const AppExecFwk::InnerEvent::Pointer &event)
             retVal = PROCESSED;
             break;
         }
-        case CellularDataEventCode::MSG_DISCONNECT_TIMEOUT_CHECK:
-            ProcessDisconnectTimeout(event);
+        case CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK:
+            stateMachine->ProcessConnectionLostTimeout(event);
             retVal = PROCESSED;
             break;
         case CellularDataEventCode::MSG_SM_RIL_ADAPTER_HOST_DIED:

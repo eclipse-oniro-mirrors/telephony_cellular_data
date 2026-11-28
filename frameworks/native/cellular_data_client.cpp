@@ -23,8 +23,8 @@
 
 namespace OHOS {
 namespace Telephony {
-int32_t CellularDataClient::defaultCellularDataSlotId_ = INVALID_MAIN_CARD_SLOTID;
-int32_t CellularDataClient::defaultCellularDataSimId_ = 0;
+std::atomic<int32_t> CellularDataClient::defaultCellularDataSlotId_{INVALID_MAIN_CARD_SLOTID};
+std::atomic<int32_t> CellularDataClient::defaultCellularDataSimId_{0};
 CellularDataClient::CellularDataClient()
 {
     if (callback_ == nullptr) {
@@ -98,8 +98,8 @@ void CellularDataClient::OnRemoteDied(const wptr<IRemoteObject> &remote)
     if ((serviceRemote != nullptr) && (serviceRemote == remote.promote())) {
         serviceRemote->RemoveDeathRecipient(deathRecipient_);
         proxy_ = nullptr;
-        defaultCellularDataSlotId_ = INVALID_MAIN_CARD_SLOTID;
-        defaultCellularDataSimId_ = 0;
+        defaultCellularDataSlotId_.store(INVALID_MAIN_CARD_SLOTID);
+        defaultCellularDataSimId_.store(0);
         registerStatus_ = false;
         TELEPHONY_LOGE("on remote died");
     }
@@ -146,8 +146,9 @@ void CellularDataClient::UnregisterSimAccountCallback()
 int32_t CellularDataClient::GetDefaultCellularDataSlotId()
 {
     RegisterSimAccountCallback();
-    if (IsValidSlotId(defaultCellularDataSlotId_) && registerStatus_) {
-        return defaultCellularDataSlotId_;
+    int32_t defaultSlotId = defaultCellularDataSlotId_.load();
+    if (IsValidSlotId(defaultSlotId) && registerStatus_) {
+        return defaultSlotId;
     }
     sptr<ICellularDataManager> proxy = GetProxy();
     if (proxy == nullptr) {
@@ -160,8 +161,8 @@ int32_t CellularDataClient::GetDefaultCellularDataSlotId()
         TELEPHONY_LOGE("GetDefaultCellularDataSlotId IPC error, %{public}d", ret);
         return ret;
     }
-    defaultCellularDataSlotId_ = slotId;
-    return defaultCellularDataSlotId_;
+    defaultCellularDataSlotId_.store(slotId);
+    return slotId;
 }
 
 int32_t CellularDataClient::GetDefaultCellularDataSlotIdFromProxy()
@@ -187,8 +188,9 @@ int32_t CellularDataClient::GetDefaultCellularDataSlotIdFromProxy()
 int32_t CellularDataClient::GetDefaultCellularDataSimId(int32_t &simId)
 {
     RegisterSimAccountCallback();
-    if (defaultCellularDataSimId_ > 0) {
-        simId = defaultCellularDataSimId_;
+    int32_t defaultSimId = defaultCellularDataSimId_.load();
+    if (defaultSimId > 0) {
+        simId = defaultSimId;
         return TELEPHONY_ERR_SUCCESS;
     }
     sptr<ICellularDataManager> proxy = GetProxy();
@@ -198,7 +200,7 @@ int32_t CellularDataClient::GetDefaultCellularDataSimId(int32_t &simId)
     }
     int32_t result = proxy->GetDefaultCellularDataSimId(simId);
     if (result == TELEPHONY_ERR_SUCCESS) {
-        defaultCellularDataSimId_ = simId;
+        defaultCellularDataSimId_.store(simId);
     }
     return result;
 }
@@ -213,11 +215,11 @@ int32_t CellularDataClient::SetDefaultCellularDataSlotId(int32_t slotId)
     }
     int32_t result = proxy->SetDefaultCellularDataSlotId(slotId);
     if (result == TELEPHONY_ERR_SUCCESS) {
-        defaultCellularDataSlotId_ = slotId;
+        defaultCellularDataSlotId_.store(slotId);
         int32_t simId = 0;
         int32_t ret = proxy->GetDefaultCellularDataSimId(simId);
         if (ret == TELEPHONY_ERR_SUCCESS) {
-            defaultCellularDataSimId_ = simId;
+            defaultCellularDataSimId_.store(simId);
         }
     }
     return result;
@@ -225,16 +227,18 @@ int32_t CellularDataClient::SetDefaultCellularDataSlotId(int32_t slotId)
 
 int32_t CellularDataClient::UpdateDefaultCellularDataSlotId()
 {
-    defaultCellularDataSlotId_ = INVALID_MAIN_CARD_SLOTID;
-    defaultCellularDataSimId_ = 0;
     sptr<ICellularDataManager> proxy = GetProxy();
     if (proxy == nullptr) {
         TELEPHONY_LOGE("proxy is null");
         return TELEPHONY_ERR_IPC_CONNECT_STUB_FAIL;
     }
-    proxy->GetDefaultCellularDataSlotId(defaultCellularDataSlotId_);
-    proxy->GetDefaultCellularDataSimId(defaultCellularDataSimId_);
-    return defaultCellularDataSlotId_;
+    int32_t slotId = INVALID_MAIN_CARD_SLOTID;
+    int32_t simId = 0;
+    proxy->GetDefaultCellularDataSlotId(slotId);
+    proxy->GetDefaultCellularDataSimId(simId);
+    defaultCellularDataSlotId_.store(slotId);
+    defaultCellularDataSimId_.store(simId);
+    return slotId;
 }
 
 int32_t CellularDataClient::EnableCellularData(bool enable)

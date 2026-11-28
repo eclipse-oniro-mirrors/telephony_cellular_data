@@ -16,6 +16,8 @@
 #ifndef CONNECTION_RETRY_POLICY_H
 #define CONNECTION_RETRY_POLICY_H
 
+#include <atomic>
+
 #include "apn_item.h"
 
 namespace OHOS {
@@ -47,7 +49,7 @@ private:
     static bool ConvertStrToInt(const std::string& str, int32_t& value);
 
 private:
-    static inline bool isPropOn_ = false;
+    static inline std::atomic<bool> isPropOn_ = false;
     std::vector<sptr<ApnItem>> matchedApns_;
     static inline int32_t defaultSetupFailDelay_ = DEFAULT_DELAY_FOR_SETUP_FAIL;
     static inline std::atomic<int32_t> defaultModemDendDelay_ = DEFAULT_DELAY_FOR_MODEM_DEND;

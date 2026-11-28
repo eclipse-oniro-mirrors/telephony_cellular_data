@@ -31,7 +31,6 @@ public:
     virtual bool StateProcess(const AppExecFwk::InnerEvent::Pointer &event);
 
 private:
-    void ProcessDisconnectTimeout(const AppExecFwk::InnerEvent::Pointer &event);
     void ProcessRilAdapterHostDied(const AppExecFwk::InnerEvent::Pointer &event);
     void ProcessRilDeactivateDataCall(const AppExecFwk::InnerEvent::Pointer &event);
 

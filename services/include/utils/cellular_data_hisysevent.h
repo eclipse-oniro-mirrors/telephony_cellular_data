@@ -31,6 +31,7 @@ enum class DataDisconnectCause {
     BY_USER,
     HIGN_PRIORITY_NETWORK,
     LOST_CONNECTION,
+    INTERFACE_DOWN,
 };
 
 class CellularDataHiSysEvent : public TelephonyHiSysEvent {

@@ -60,6 +60,14 @@ private:
             [this](const AppExecFwk::InnerEvent::Pointer &data) { return ProcessDisconnectAllDone(data); } },
         { CellularDataEventCode::MSG_SM_LOST_CONNECTION,
             [this](const AppExecFwk::InnerEvent::Pointer &data) { return ProcessLostConnection(data); } },
+        { CellularDataEventCode::MSG_CONNECTION_LOST_TIMEOUT_CHECK,
+            [this](const AppExecFwk::InnerEvent::Pointer &data) {
+                auto stateMachine = stateMachine_.lock();
+                if (stateMachine != nullptr) {
+                    stateMachine->ProcessConnectionLostTimeout(data);
+                }
+                return true;
+            } },
         { CellularDataEventCode::MSG_SM_LINK_CAPABILITY_CHANGED,
             [this](const AppExecFwk::InnerEvent::Pointer &data) { return ProcessLinkCapabilityChanged(data); } },
         { CellularDataEventCode::MSG_SM_DATA_ROAM_ON,

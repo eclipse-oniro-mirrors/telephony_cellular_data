@@ -38,7 +38,7 @@ ConnectionRetryPolicy::ConnectionRetryPolicy()
 {
     char retryStrategyAllow[SYSPARA_SIZE] = { 0 };
     GetParameter(PROP_RETRY_STRATEGY_ALLOW, DEFAULT_RETRY_STRATEGY_ALLOW, retryStrategyAllow, SYSPARA_SIZE);
-    isPropOn_ = (strcmp(retryStrategyAllow, "true") == 0);
+    isPropOn_.store(strcmp(retryStrategyAllow, "true") == 0);
     char setupFailDelay[SYSPARA_SIZE] = { 0 };
     GetParameter(PROP_SETUP_FAIL_DELAY, DEFAULT_DELAY, setupFailDelay, SYSPARA_SIZE);
     if (!ConvertStrToInt(setupFailDelay, defaultSetupFailDelay_)) {
@@ -124,7 +124,7 @@ int64_t ConnectionRetryPolicy::GetNextRetryDelay(std::string apnType, int32_t ca
         }
 #ifdef OHOS_BUILD_ENABLE_TELEPHONY_EXT
         int64_t updatedDelay = 0;
-        if (isPropOn_ && TELEPHONY_EXT_WRAPPER.handleDendFailcause_) {
+        if (isPropOn_.load() && TELEPHONY_EXT_WRAPPER.handleDendFailcause_) {
             updatedDelay = TELEPHONY_EXT_WRAPPER.handleDendFailcause_(cause, suggestTime);
         }
         if (updatedDelay > 0) {
@@ -143,7 +143,7 @@ void ConnectionRetryPolicy::InitialRetryCountValue()
 {
     tryCount_ = 0;
 #ifdef OHOS_BUILD_ENABLE_TELEPHONY_EXT
-    if (isPropOn_ && TELEPHONY_EXT_WRAPPER.handleDendFailcause_) {
+    if (isPropOn_.load() && TELEPHONY_EXT_WRAPPER.handleDendFailcause_) {
         TELEPHONY_EXT_WRAPPER.handleDendFailcause_(0, 0);
     }
 #endif
@@ -160,7 +160,7 @@ void ConnectionRetryPolicy::OnPropChanged(const char *key, const char *value, vo
         return;
     }
     if (strcmp(key, PROP_RETRY_STRATEGY_ALLOW) == 0) {
-        isPropOn_ = (strcmp(value, "true") == 0);
+        isPropOn_.store(strcmp(value, "true") == 0);
     } else if ((strcmp(key, PROP_SETUP_FAIL_DELAY) == 0)) {
         if (!ConvertStrToInt(value, defaultSetupFailDelay_)) {
             TELEPHONY_LOGE("invalid value: %{public}s", value);
@@ -174,14 +174,14 @@ void ConnectionRetryPolicy::OnPropChanged(const char *key, const char *value, vo
     } else {
         TELEPHONY_LOGI("invalid key: %{public}s", key);
     }
-    TELEPHONY_LOGI("prop change: allow=%{public}d, delay=%{public}d,%{public}d", isPropOn_, defaultSetupFailDelay_,
-        defaultModemDendDelay_.load());
+    TELEPHONY_LOGI("prop change: allow=%{public}d, delay=%{public}d,%{public}d",
+        isPropOn_.load(), defaultSetupFailDelay_, defaultModemDendDelay_.load());
 }
 
 DisConnectionReason ConnectionRetryPolicy::ConvertPdpErrorToDisconnReason(int32_t reason)
 {
 #ifdef OHOS_BUILD_ENABLE_TELEPHONY_EXT
-    if (isPropOn_ && TELEPHONY_EXT_WRAPPER.convertPdpError_) {
+    if (isPropOn_.load() && TELEPHONY_EXT_WRAPPER.convertPdpError_) {
         reason = TELEPHONY_EXT_WRAPPER.convertPdpError_(reason);
     }
 #endif
@@ -239,7 +239,7 @@ bool ConnectionRetryPolicy::ConvertStrToInt(const std::string& str, int32_t& val
 void ConnectionRetryPolicy::RestartRadioIfRequired(int32_t failCause, int32_t slotId)
 {
 #ifdef OHOS_BUILD_ENABLE_TELEPHONY_EXT
-    if (isPropOn_ && TELEPHONY_EXT_WRAPPER.restartRadioIfRequired_) {
+    if (isPropOn_.load() && TELEPHONY_EXT_WRAPPER.restartRadioIfRequired_) {
         TELEPHONY_EXT_WRAPPER.restartRadioIfRequired_(failCause, slotId);
     }
 #endif

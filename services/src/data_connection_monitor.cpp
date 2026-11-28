@@ -22,7 +22,10 @@
 
 namespace OHOS {
 namespace Telephony {
-DataConnectionMonitor::DataConnectionMonitor(int32_t slotId) : TelEventHandler("DataConnectionMonitor"), slotId_(slotId)
+DataConnectionMonitor::DataConnectionMonitor(
+    int32_t slotId, std::shared_ptr<AppExecFwk::EventHandler> pdpContextListObserver)
+    : TelEventHandler("DataConnectionMonitor"), slotId_(slotId),
+      pdpContextListObserver_(std::move(pdpContextListObserver))
 {
     trafficManager_ = std::make_unique<TrafficManagement>(slotId);
     stallDetectionTrafficManager_ = std::make_unique<TrafficManagement>(slotId);
@@ -33,10 +36,10 @@ DataConnectionMonitor::DataConnectionMonitor(int32_t slotId) : TelEventHandler("
 
 void DataConnectionMonitor::HandleScreenStateChanged(bool isScreenOn)
 {
-    if (isScreenOn_ == isScreenOn) {
+    if (isScreenOn_.load() == isScreenOn) {
         return;
     }
-    isScreenOn_ = isScreenOn;
+    isScreenOn_.store(isScreenOn);
     const int32_t defSlotId = CoreManagerInner::GetInstance().GetDefaultCellularDataSlotId();
     if (slotId_ != defSlotId && !IsVsimEnabled()) {
         return;
@@ -70,7 +73,7 @@ bool DataConnectionMonitor::IsAggressiveRecovery()
  
 int32_t DataConnectionMonitor::GetStallDetectionPeriod()
 {
-    if (isScreenOn_ || IsAggressiveRecovery()) {
+    if (isScreenOn_.load() || IsAggressiveRecovery()) {
         return DATA_STALL_ALARM_AGGRESSIVE_DELAY_IN_MS_DEFAULT;
     }
     return DATA_STALL_ALARM_NON_AGGRESSIVE_DELAY_IN_MS_DEFAULT;
@@ -79,7 +82,7 @@ int32_t DataConnectionMonitor::GetStallDetectionPeriod()
 void DataConnectionMonitor::StartStallDetectionTimer()
 {
     TELEPHONY_LOGD("Slot%{public}d: start stall detection", slotId_);
-    stallDetectionEnabled_ = true;
+    stallDetectionEnabled_.store(true);
     int32_t stallDetectionPeriod = GetStallDetectionPeriod();
     TELEPHONY_LOGD("stallDetectionPeriod = %{public}d", stallDetectionPeriod);
     if (!HasInnerEvent(CellularDataEventCode::MSG_STALL_DETECTION_EVENT_ID)) {
@@ -111,7 +114,7 @@ __attribute__((no_sanitize("cfi"))) void DataConnectionMonitor::OnStallDetection
     }
     int32_t stallDetectionPeriod = GetStallDetectionPeriod();
     TELEPHONY_LOGD("stallDetectionPeriod = %{public}d", stallDetectionPeriod);
-    if (!HasInnerEvent(CellularDataEventCode::MSG_STALL_DETECTION_EVENT_ID) && stallDetectionEnabled_) {
+    if (!HasInnerEvent(CellularDataEventCode::MSG_STALL_DETECTION_EVENT_ID) && stallDetectionEnabled_.load()) {
         AppExecFwk::InnerEvent::Pointer event =
             AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_STALL_DETECTION_EVENT_ID);
         SendEvent(event, stallDetectionPeriod, Priority::LOW);
@@ -121,7 +124,7 @@ __attribute__((no_sanitize("cfi"))) void DataConnectionMonitor::OnStallDetection
 void DataConnectionMonitor::StopStallDetectionTimer()
 {
     TELEPHONY_LOGD("Slot%{public}d: stop stall detection", slotId_);
-    stallDetectionEnabled_ = false;
+    stallDetectionEnabled_.store(false);
     RemoveEvent(CellularDataEventCode::MSG_STALL_DETECTION_EVENT_ID);
 }
 
@@ -233,8 +236,13 @@ void DataConnectionMonitor::UpdateNetTrafficState()
 
 void DataConnectionMonitor::GetPdpContextList()
 {
+    // The solicited query response carries the same DataCallResultList as the unsolicited
+    // RADIO_DATA_CALL_LIST_CHANGED report. Route it to the data connection state machine so
+    // that a cid reported as inactive runs the same retry path as a modem initiated release.
+    std::shared_ptr<AppExecFwk::EventHandler> observer =
+        (pdpContextListObserver_ != nullptr) ? pdpContextListObserver_ : shared_from_this();
     CoreManagerInner::GetInstance().GetPdpContextList(slotId_,
-        RadioEvent::RADIO_DATA_CALL_LIST_CHANGED, shared_from_this());
+        RadioEvent::RADIO_DATA_CALL_LIST_CHANGED, observer);
 }
 
 void DataConnectionMonitor::SetRadioState(const int32_t &radioState, const int32_t &eventCode)
@@ -323,14 +331,6 @@ CellDataFlowType DataConnectionMonitor::GetDataFlowType()
     return dataFlowType_;
 }
 
-void DataConnectionMonitor::SetDataFlowType(CellDataFlowType dataFlowType)
-{
-    if (dataFlowType_ != dataFlowType) {
-        dataFlowType_ = dataFlowType;
-        StateNotification::GetInstance().OnUpDataFlowtype(slotId_, dataFlowType_);
-    }
-}
-
 void DataConnectionMonitor::IsNeedDoRecovery(bool needDoRecovery)
 {
     if (needDoRecovery) {
@@ -340,10 +340,18 @@ void DataConnectionMonitor::IsNeedDoRecovery(bool needDoRecovery)
     }
     int32_t stallDetectionPeriod = GetStallDetectionPeriod();
     TELEPHONY_LOGD("stallDetectionPeriod = %{public}d", stallDetectionPeriod);
-    if (!HasInnerEvent(CellularDataEventCode::MSG_STALL_DETECTION_EVENT_ID) && stallDetectionEnabled_) {
+    if (!HasInnerEvent(CellularDataEventCode::MSG_STALL_DETECTION_EVENT_ID) && stallDetectionEnabled_.load()) {
         AppExecFwk::InnerEvent::Pointer event =
             AppExecFwk::InnerEvent::Get(CellularDataEventCode::MSG_STALL_DETECTION_EVENT_ID);
         SendEvent(event, stallDetectionPeriod, Priority::LOW);
+    }
+}
+
+void DataConnectionMonitor::SetDataFlowType(CellDataFlowType dataFlowType)
+{
+    if (dataFlowType_ != dataFlowType) {
+        dataFlowType_ = dataFlowType;
+        StateNotification::GetInstance().OnUpDataFlowtype(slotId_, dataFlowType_);
     }
 }
 
