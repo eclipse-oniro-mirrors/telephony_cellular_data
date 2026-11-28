@@ -34,17 +34,22 @@ constexpr int32_t EVENT_ID_MAX = 255;
 
 void UpdateInActiveMachineFuzz(const uint8_t *data, size_t size)
 {
-    std::shared_ptr<StateMachineFuzzer> machine = std::make_shared<StateMachineFuzzer>();
-    if (machine == nullptr) {
-        return;
-    }
     FuzzedDataProvider fdp(data, size);
     int32_t slotId = fdp.ConsumeIntegralInRange<int32_t>(0, SLOT_NUM_MAX);
-    std::shared_ptr<CellularDataStateMachine> cellularMachine = machine->CreateCellularDataConnect(slotId);
+    static std::vector<std::shared_ptr<StateMachineFuzzer>> machines(SLOT_NUM_MAX + 1);
+    static std::vector<std::shared_ptr<CellularDataStateMachine>> cellularMachines(SLOT_NUM_MAX + 1);
+    if (machines[slotId] == nullptr) {
+        machines[slotId] = std::make_shared<StateMachineFuzzer>();
+        cellularMachines[slotId] = machines[slotId]->CreateCellularDataConnect(slotId);
+        if (cellularMachines[slotId] == nullptr) {
+            return;
+        }
+        cellularMachines[slotId]->Init();
+    }
+    std::shared_ptr<CellularDataStateMachine> cellularMachine = cellularMachines[slotId];
     if (cellularMachine == nullptr) {
         return;
     }
-    cellularMachine->Init();
 
     auto inactive = std::make_shared<Inactive>(std::weak_ptr<CellularDataStateMachine>(cellularMachine), "Inactive");
     auto activating =
