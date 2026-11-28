@@ -16,6 +16,10 @@ import("//build/config/features.gni")
 import("//build/ohos.gni")
 import("//build/test.gni")
 
+config("fuzz_no_gc_sections_config") {
+  ldflags = [ "-Wl,--no-gc-sections" ]
+}
+
 ##############################fuzztest##########################################
 ohos_fuzztest("UpdateIncallDataMachineFuzzTest") {
   branch_protector_ret = "pac_ret"
@@ -70,11 +74,19 @@ ohos_fuzztest("UpdateIncallDataMachineFuzzTest") {
     "-Wno-unused-variable",
     "-fno-omit-frame-pointer",
     "-flto",
-    "-fvisibility=hidden",
+    "-fvisibility=default",
   ]
 
   ldflags = [
     "-flto",
+  ]
+
+  configs = [
+    ":fuzz_no_gc_sections_config",
+    "//build/config/sanitizers:sanitizer_trap_all_flags",
+    "//build/config/sanitizers:cfi_cross_dso_release",
+    "//build/config/sanitizers:cfi_config_skip_std",
+    "//build/config/sanitizers:cfi_trap_function_flags",
   ]
 
   sources = [
